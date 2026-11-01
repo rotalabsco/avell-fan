@@ -1,0 +1,17 @@
+[Unit]
+Description=Controle de fans do Avell (Uniwill) via tuxedo_io
+After=systemd-modules-load.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+# se o loop travar sem morrer, o systemd mata e o ExecStopPost devolve o fan para a BIOS
+WatchdogSec=15
+ExecStart=/usr/local/bin/avell-fan daemon
+# Se o daemon cair ou for morto, os fans voltam para o automático da BIOS
+ExecStopPost=/usr/local/bin/avell-fan auto
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

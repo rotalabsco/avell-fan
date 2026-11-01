@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Avell Fan (bandeja)
+Comment=Ícone de controle das ventoinhas na bandeja
+Exec=avell-fan-gui --bandeja
+Icon=avell-fan
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

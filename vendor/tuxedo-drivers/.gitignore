@@ -1,0 +1,21 @@
+# make artifacts
+*.cmd
+*.ko
+*.mod
+*.mod.c
+*.o
+*.o.d
+modules.order
+Module.symvers
+
+# build artifacts
+/build/
+/build-alpm/
+/build-deb/
+/build-rpm/
+
+# IDE artifacts
+*.kate-swp
+/*.kdev4
+/.vscode
+/.cache

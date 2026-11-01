@@ -1,0 +1,924 @@
+#!/usr/bin/env python3
+"""Interface gráfica do avell-fan (GTK3, visual do RotaLabs DS).
+
+Roda como usuário comum: lê /run/avell-fan/status.json e escreve /run/avell-fan/perfil.
+Salvar curvas usa pkexec -> "avell-fan aplicar-config".
+
+  avell-fan-gui            abre a janela
+  avell-fan-gui --bandeja  inicia só no ícone da bandeja (usado no autostart)
+"""
+import collections
+import ctypes
+import ctypes.util
+import glob
+import importlib.machinery
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+SHARE = "/usr/local/share/avell-fan"
+
+
+def _asset(*parts):
+    for base in (HERE, SHARE):
+        p = os.path.join(base, *parts)
+        if os.path.exists(p):
+            return p
+    return None
+
+
+# Fontes do DS (Bricolage Grotesque, Geist, Geist Mono) registradas só para este processo,
+# antes do Pango criar o fontmap.
+def _register_fonts():
+    d = _asset("fonts")
+    lib = ctypes.util.find_library("fontconfig")
+    if not d or not lib:
+        return
+    fc = ctypes.CDLL(lib)
+    fc.FcConfigAppFontAddFile.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+    for f in glob.glob(os.path.join(d, "*.ttf")):
+        fc.FcConfigAppFontAddFile(None, f.encode())
+
+
+_register_fonts()
+
+import gi  # noqa: E402
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import Gdk, GdkPixbuf, GLib, Gtk  # noqa: E402
+
+try:
+    gi.require_version("XApp", "1.0")
+    from gi.repository import XApp  # noqa: E402
+except (ValueError, ImportError):
+    XApp = None
+try:
+    gi.require_version("AyatanaAppIndicator3", "0.1")
+    from gi.repository import AyatanaAppIndicator3 as AppIndicator  # noqa: E402
+except (ValueError, ImportError):
+    AppIndicator = None
+
+
+def _load_core():
+    for path in (os.path.join(HERE, "avell-fan"), "/usr/local/bin/avell-fan"):
+        if os.path.exists(path):
+            loader = importlib.machinery.SourceFileLoader("avell_fan_core", path)
+            mod = importlib.util.module_from_spec(importlib.util.spec_from_loader("avell_fan_core", loader))
+            loader.exec_module(mod)
+            return mod, path
+    sys.exit("avell-fan não encontrado")
+
+
+core, CORE_BIN = _load_core()
+ICON = _asset("avell-fan.svg") or "sensors-fan-symbolic"
+VERSION = "1.0"
+
+PERFIS_UI = [("auto", "Automático", "BIOS decide"), ("silencioso", "Silencioso", "Mínimo de ruído"),
+             ("equilibrado", "Equilibrado", "Dia a dia"), ("maximo", "Máximo", "100% sempre")]
+NOME = {p[0]: p[1] for p in PERFIS_UI}
+EDITAVEIS = ["silencioso", "equilibrado"]
+HIST_S = 300
+POLL_MS = 1000
+
+# ---- RotaLabs DS v2 (dark) — tokens de src/styles/globals.css
+T = {
+    "bg": "#0b0c0d", "raised": "#121416", "sunken": "#07080a", "hover": "#1a1d20",
+    "line": "#23272b", "line_strong": "#3a4248",
+    "ink": "#f2f1ee", "ink2": "#a9aeb2", "ink3": "#80878c",
+    "orange": "#e77c22", "accent": "#f28a2e", "accent_hover": "#ff9a42", "accent_soft": "#2a1708",
+    "on_accent": "#0b0c0d", "rank": "#7aa2ff", "wp": "#5fd0b0",
+    "success": "#4cc38a", "warning": "#f2b441", "danger": "#f0655a",
+}
+C_CPU, C_GPU, C_FAN = T["accent"], T["wp"], T["rank"]
+
+CSS = """
+* { font-family: "Geist", sans-serif; }
+window.avell, window.avell-pop { background-color: @bg; color: @ink; font-size: 13px; }
+window.avell-pop { border: 1px solid @line_strong; border-radius: 12px; }
+headerbar.avell-hb { background: @raised; background-image: none; border: none; border-bottom: 1px solid @line;
+  box-shadow: none; min-height: 60px; padding: 0 12px 0 20px; }
+headerbar.avell-hb button.titlebutton { color: @ink2; background: none; border: none; box-shadow: none; }
+headerbar.avell-hb button.titlebutton:hover { color: @ink; background: @hover; }
+.app-icon { background: @sunken; border: 1px solid @line_strong; border-radius: 8px; padding: 6px; }
+.title-app { font-family: "Bricolage Grotesque"; font-weight: 600; font-size: 18px; }
+.mono { font-family: "Geist Mono"; }
+.sub { font-family: "Geist Mono"; font-size: 11px; color: @ink3; }
+.overline { font-family: "Geist Mono"; font-size: 11px; color: @ink3; }
+.muted { color: @ink3; }
+.ink2 { color: @ink2; }
+.pill { background: @sunken; border: 1px solid @line; border-radius: 9999px; padding: 4px 12px; font-size: 12px; color: @ink2; }
+.segmented { background: @sunken; border: 1px solid @line; border-radius: 12px; padding: 4px; }
+.segmented button { background: transparent; background-image: none; border: 1px solid transparent; border-radius: 9px;
+  box-shadow: none; text-shadow: none; color: @ink; padding: 8px 14px; min-height: 40px; }
+.segmented button:hover { background: @hover; }
+.segmented button:checked { background: @accent_soft; border-color: @orange; color: @accent; }
+.segmented button .seg-title { font-weight: 600; font-size: 14px; }
+.segmented button .seg-desc { font-size: 12px; color: @ink3; }
+.tabs { background: @sunken; border: 1px solid @line; border-radius: 10px; padding: 3px; }
+.tabs button { background: transparent; background-image: none; border: none; border-radius: 7px; box-shadow: none;
+  text-shadow: none; color: @ink2; padding: 4px 12px; min-height: 30px; font-weight: 500; }
+.tabs button:checked { background: @hover; color: @ink; }
+.card { background: @raised; border: 1px solid @line; border-radius: 16px; padding: 16px; }
+.big { font-family: "Bricolage Grotesque"; font-weight: 600; font-size: 36px; }
+.unit { font-size: 14px; color: @ink3; }
+.h3 { font-family: "Bricolage Grotesque"; font-weight: 600; font-size: 15px; }
+.legend { font-size: 12px; color: @ink2; }
+progressbar trough { background: @hover; min-height: 4px; border-radius: 9999px; border: none; }
+progressbar progress { min-height: 4px; border-radius: 9999px; border: none; background-image: none; }
+.cpu progressbar progress { background: @accent; }
+.gpu progressbar progress { background: @wp; }
+.fan progressbar progress { background: @rank; }
+.off progressbar progress { background: @line_strong; }
+button.primary { background: @orange; background-image: none; color: @on_accent; font-weight: 600; border: none;
+  border-radius: 10px; min-height: 40px; padding: 0 18px; box-shadow: none; text-shadow: none; }
+button.primary:hover { background: @accent; }
+button.secondary { background: transparent; background-image: none; color: @ink; border: 1px solid @line_strong;
+  border-radius: 10px; min-height: 40px; padding: 0 14px; box-shadow: none; text-shadow: none; font-weight: 500; }
+button.secondary:hover { background: @hover; }
+button.ghost { background: transparent; background-image: none; color: @ink2; border: none; border-radius: 10px;
+  min-height: 40px; padding: 0 14px; box-shadow: none; text-shadow: none; font-weight: 500; }
+button.ghost:hover { background: @hover; color: @ink; }
+button:disabled { opacity: 0.45; }
+.banner { border-radius: 10px; padding: 10px 14px; }
+.banner.warning { background: #1d1608; border: 1px solid #5a4318; }
+.banner.error { background: #22100e; border: 1px solid #5c2621; }
+.banner.info { background: @sunken; border: 1px solid @line; }
+.footer { border-top: 1px solid @line; padding: 10px 24px; font-size: 12px; color: @ink3; }
+.pop-head { border-bottom: 1px solid @line; padding: 12px 12px 14px; }
+.pop-sep { border-top: 1px solid @line; padding-top: 4px; }
+.pop-big { font-family: "Bricolage Grotesque"; font-weight: 600; font-size: 22px; }
+.pop-item { background: transparent; background-image: none; border: none; border-radius: 8px; box-shadow: none;
+  text-shadow: none; color: @ink; min-height: 40px; padding: 0 12px; font-size: 14px; }
+.pop-item:hover { background: @hover; }
+.pop-item:checked { background: @accent_soft; color: @accent; font-weight: 600; }
+.pop-item.dim { color: @ink2; }
+"""
+CSS = "".join(f"@define-color {k} {v};\n" for k, v in T.items()) + CSS
+
+RL_MARK = (b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">'
+           b'<path d="M15 12 L22 52 L47 32 Z" fill="none" stroke="#F2F1EE" stroke-width="3.5" stroke-linejoin="round"/>'
+           b'<circle cx="15" cy="12" r="6.5" fill="#F2F1EE"/><circle cx="22" cy="52" r="6.5" fill="#F2F1EE"/>'
+           b'<circle cx="47" cy="32" r="8" fill="#E77C22"/></svg>')
+
+
+def rgb(hexcor, a=1.0):
+    h = hexcor.lstrip("#")
+    return (int(h[0:2], 16) / 255, int(h[2:4], 16) / 255, int(h[4:6], 16) / 255, a)
+
+
+def svg_pixbuf(data, size):
+    loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
+    loader.set_size(size, size)
+    loader.write(data)
+    loader.close()
+    return loader.get_pixbuf()
+
+
+def icon_image(size):
+    if os.path.isabs(ICON):
+        with open(ICON, "rb") as f:
+            return Gtk.Image.new_from_pixbuf(svg_pixbuf(f.read(), size))
+    return Gtk.Image.new_from_icon_name(ICON, Gtk.IconSize.DND)
+
+
+def label(text="", *classes, xalign=0.0, markup=False):
+    lb = Gtk.Label(xalign=xalign)
+    (lb.set_markup if markup else lb.set_text)(text)
+    for c in classes:
+        lb.get_style_context().add_class(c)
+    return lb
+
+
+def cls(widget, *classes):
+    for c in classes:
+        widget.get_style_context().add_class(c)
+    return widget
+
+
+def dot(cor):
+    return label(f'<span foreground="{cor}">●</span>', markup=True)
+
+
+def modelo_notebook():
+    try:
+        with open("/sys/class/dmi/id/product_name") as f:
+            nome = f.read().strip()
+    except OSError:
+        nome = ""
+    return " · ".join(x for x in (nome.upper(), "UNIWILL", "TUXEDO_IO") if x)
+
+
+def read_status():
+    try:
+        with open(core.STATUS_FILE) as f:
+            s = json.load(f)
+        if time.time() - s.get("ts", 0) > 10:
+            return None
+        return s
+    except (OSError, ValueError):
+        return None
+
+
+def set_perfil(nome):
+    try:
+        core.write_perfil(nome)
+        return None
+    except OSError:
+        return "Não consegui trocar o perfil. O serviço avell-fan está rodando?"
+
+
+def user_config():
+    try:
+        with open(core.CONFIG_FILE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def cairo_font(cr, size, family="Geist Mono"):
+    import cairo
+    cr.select_font_face(family, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+    cr.set_font_size(size)
+
+
+# ======================================================================== widgets
+class Card(Gtk.Box):
+    def __init__(self, titulo, cor, tipo):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        cls(self, "card", tipo)
+        self.tipo = tipo
+        top = Gtk.Box(spacing=8)
+        self.dot = dot(cor)
+        top.pack_start(self.dot, False, False, 0)
+        top.pack_start(label(titulo, "overline"), False, False, 0)
+        val = Gtk.Box(spacing=4)
+        self.valor = label("—", "big")
+        self.valor.set_valign(Gtk.Align.BASELINE)
+        self.unidade = label("", "unit")
+        self.unidade.set_valign(Gtk.Align.BASELINE)
+        val.pack_start(self.valor, False, False, 0)
+        val.pack_start(self.unidade, False, False, 0)
+        self.barra = Gtk.ProgressBar()
+        self.pack_start(top, False, False, 0)
+        self.pack_start(val, False, False, 0)
+        self.pack_start(self.barra, False, False, 0)
+
+    def set(self, valor, unidade, frac):
+        ctx = self.get_style_context()
+        if valor is None:
+            self.valor.set_text("—"); self.unidade.set_text(""); self.barra.set_fraction(0)
+            ctx.remove_class(self.tipo); ctx.add_class("off")
+        else:
+            self.valor.set_text(str(valor)); self.unidade.set_text(unidade)
+            self.barra.set_fraction(max(0, min(1, frac)))
+            ctx.remove_class("off"); ctx.add_class(self.tipo)
+
+
+class Grafico(Gtk.DrawingArea):
+    """Histórico: temp CPU, temp GPU e % do fan na mesma escala 0–100."""
+
+    def __init__(self):
+        super().__init__()
+        self.set_size_request(-1, 150)
+        self.hist = collections.deque(maxlen=HIST_S)
+        self.failsafe = 90
+        self.connect("draw", self.on_draw)
+
+    def push(self, amostra):
+        self.hist.append(amostra)
+        self.queue_draw()
+
+    def on_draw(self, _w, cr):
+        w, h = self.get_allocated_width(), self.get_allocated_height()
+        x0, y0, gw, gh = 32, 6, w - 32, h - 14
+        y = lambda v: y0 + gh * (1 - max(0, min(100, v)) / 100)
+        cairo_font(cr, 10)
+        cr.set_line_width(1)
+        for v in (0, 25, 50, 75, 100):
+            cr.set_source_rgba(*rgb(T["line"])); cr.move_to(x0, y(v) + .5); cr.line_to(w, y(v) + .5); cr.stroke()
+        for v, dx in ((100, 0), (50, 6), (0, 12)):
+            cr.set_source_rgba(*rgb(T["ink3"])); cr.move_to(dx, y(v) + 4); cr.show_text(str(v))
+        cr.set_source_rgba(*rgb(T["danger"], .7)); cr.set_line_width(1.5); cr.set_dash([5, 4])
+        cr.move_to(x0, y(self.failsafe)); cr.line_to(w, y(self.failsafe)); cr.stroke(); cr.set_dash([])
+        n = len(self.hist)
+        if n < 2:
+            cr.set_source_rgba(*rgb(T["ink3"])); cairo_font(cr, 12, "Geist")
+            cr.move_to(x0 + 12, y0 + gh / 2); cr.show_text("Aguardando leituras…")
+            return
+        x = lambda i: x0 + gw * (HIST_S - n + i) / (HIST_S - 1)
+        for idx, cor, lw in ((2, C_FAN, 2), (1, C_GPU, 2), (0, C_CPU, 2.25)):
+            cr.set_source_rgba(*rgb(cor)); cr.set_line_width(lw); cr.set_line_join(1)
+            for i, a in enumerate(self.hist):
+                (cr.move_to if i == 0 else cr.line_to)(x(i), y(a[idx]))
+            cr.stroke()
+
+
+class EditorCurva(Gtk.DrawingArea):
+    """Curva temp→% com pontos arrastáveis. Duplo clique adiciona ponto, clique direito remove."""
+    T_MIN, T_MAX = 30, 100
+    RAIO = 7
+
+    def __init__(self, on_change):
+        super().__init__()
+        self.set_size_request(-1, 190)
+        self.pontos = []
+        self.temp_atual = None
+        self.failsafe = 90
+        self.pct_minimo = 25
+        self.arrastando = None
+        self.on_change = on_change
+        self.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK
+                        | Gdk.EventMask.POINTER_MOTION_MASK)
+        self.connect("draw", self.on_draw)
+        self.connect("button-press-event", self.on_press)
+        self.connect("button-release-event", self.on_release)
+        self.connect("motion-notify-event", self.on_motion)
+
+    def _area(self):
+        w, h = self.get_allocated_width(), self.get_allocated_height()
+        return 40, 8, w - 64, h - 30
+
+    def to_px(self, t, p):
+        x0, y0, gw, gh = self._area()
+        return x0 + gw * (t - self.T_MIN) / (self.T_MAX - self.T_MIN), y0 + gh * (1 - p / 100)
+
+    def from_px(self, x, y):
+        x0, y0, gw, gh = self._area()
+        return round(self.T_MIN + (x - x0) / gw * (self.T_MAX - self.T_MIN)), round((1 - (y - y0) / gh) * 100)
+
+    def set_pontos(self, pts):
+        self.pontos = [list(p) for p in sorted(pts)]
+        self.queue_draw()
+
+    def _hit(self, x, y):
+        for i, (t, p) in enumerate(self.pontos):
+            px, py = self.to_px(t, p)
+            if (px - x) ** 2 + (py - y) ** 2 <= (self.RAIO + 5) ** 2:
+                return i
+        return None
+
+    def on_press(self, _w, ev):
+        i = self._hit(ev.x, ev.y)
+        if ev.button == 3 and i is not None and len(self.pontos) > 2:
+            del self.pontos[i]
+            self._changed()
+        elif ev.button == 1 and ev.type == Gdk.EventType._2BUTTON_PRESS and i is None:
+            t, p = self.from_px(ev.x, ev.y)
+            t = max(self.T_MIN, min(self.T_MAX, t))
+            if all(pt[0] != t for pt in self.pontos):
+                self.pontos.append([t, max(0, min(100, p))])
+                self.pontos.sort()
+                for k in range(1, len(self.pontos)):
+                    self.pontos[k][1] = max(self.pontos[k][1], self.pontos[k - 1][1])
+                self._changed()
+        elif ev.button == 1 and i is not None:
+            self.arrastando = i
+            self.queue_draw()
+        return True
+
+    def on_release(self, *_):
+        self.arrastando = None
+        self.queue_draw()
+
+    def on_motion(self, _w, ev):
+        i = self.arrastando
+        if i is None:
+            win = self.get_window()
+            if win:
+                nome = "grab" if self._hit(ev.x, ev.y) is not None else "default"
+                win.set_cursor(Gdk.Cursor.new_from_name(self.get_display(), nome))
+            return
+        t, p = self.from_px(ev.x, ev.y)
+        t_lo = self.pontos[i - 1][0] + 1 if i > 0 else self.T_MIN
+        t_hi = self.pontos[i + 1][0] - 1 if i < len(self.pontos) - 1 else self.T_MAX
+        p_lo = self.pontos[i - 1][1] if i > 0 else 0
+        p_hi = self.pontos[i + 1][1] if i < len(self.pontos) - 1 else 100
+        self.pontos[i] = [max(t_lo, min(t_hi, t)), max(p_lo, min(p_hi, p))]
+        self._changed()
+
+    def _changed(self):
+        self.queue_draw()
+        self.on_change()
+
+    def on_draw(self, _w, cr):
+        x0, y0, gw, gh = self._area()
+        cairo_font(cr, 10)
+        fx, _ = self.to_px(self.failsafe, 0)
+        cr.set_source_rgba(*rgb(T["danger"], .08)); cr.rectangle(fx, y0, x0 + gw - fx, gh); cr.fill()
+        cr.set_source_rgba(*rgb(T["danger"])); cr.move_to(fx + 8, y0 + 14); cr.show_text("FAILSAFE 100%")
+        cr.set_line_width(1)
+        for p in (0, 25, 50, 75, 100):
+            _, py = self.to_px(self.T_MIN, p)
+            cr.set_source_rgba(*rgb(T["line"])); cr.move_to(x0, py + .5); cr.line_to(x0 + gw, py + .5); cr.stroke()
+        for p, dx in ((100, 0), (50, 6), (0, 14)):
+            _, py = self.to_px(self.T_MIN, p)
+            cr.set_source_rgba(*rgb(T["ink3"])); cr.move_to(dx, py + 4); cr.show_text(f"{p}%")
+        for t in range(self.T_MIN, self.T_MAX + 1, 10):
+            px, _ = self.to_px(t, 0)
+            cr.set_source_rgba(*rgb(T["ink3"])); cr.move_to(px - 8, y0 + gh + 18); cr.show_text(f"{t}°")
+        _, my = self.to_px(0, self.pct_minimo)
+        cr.set_source_rgba(*rgb(T["ink3"])); cr.set_dash([2, 3]); cr.move_to(x0, my); cr.line_to(x0 + gw, my); cr.stroke()
+        cr.set_dash([]); cr.move_to(x0 + 6, my - 5); cr.show_text(f"MÍNIMO {self.pct_minimo}%")
+        if self.temp_atual is not None:
+            tx, _ = self.to_px(max(self.T_MIN, min(self.T_MAX, self.temp_atual)), 0)
+            cr.set_source_rgba(*rgb(C_CPU)); cr.set_line_width(1.5)
+            cr.move_to(tx, y0); cr.line_to(tx, y0 + gh); cr.stroke()
+            cr.move_to(tx + 6, y0 + gh - 6); cr.show_text(f"AGORA {self.temp_atual}°C")
+        if not self.pontos:
+            return
+        pts = self.pontos
+        cr.set_source_rgba(*rgb(C_FAN)); cr.set_line_width(2.5); cr.set_line_join(1)
+        cr.move_to(*self.to_px(self.T_MIN, pts[0][1]))
+        for t, p in pts:
+            cr.line_to(*self.to_px(t, p))
+        cr.line_to(*self.to_px(self.T_MAX, pts[-1][1]))
+        cr.stroke()
+        for i, (t, p) in enumerate(pts):
+            px, py = self.to_px(t, p)
+            cr.arc(px, py, self.RAIO + (1 if i == self.arrastando else 0), 0, 6.2832)
+            cr.set_source_rgba(*rgb(C_FAN)); cr.fill_preserve()
+            cr.set_source_rgba(*rgb(T["bg"])); cr.set_line_width(2.5); cr.stroke()
+            if i == self.arrastando:
+                cr.set_source_rgba(*rgb(T["ink"])); cr.move_to(px + 12, py - 10); cr.show_text(f"{t}°C → {p}%")
+
+
+class Banner(Gtk.Box):
+    def __init__(self):
+        super().__init__(spacing=12)
+        cls(self, "banner")
+        self.icon = label("", markup=True)
+        self.msg = label("")
+        self.msg.set_line_wrap(True)
+        self.btn = cls(Gtk.Button(label="Iniciar serviço"), "secondary")
+        self.btn.connect("clicked", lambda *_: subprocess.Popen(["pkexec", "systemctl", "start", "avell-fan"]))
+        close = cls(Gtk.Button(label="✕"), "ghost")
+        close.connect("clicked", lambda *_: self.hide())
+        self.pack_start(self.icon, False, False, 0)
+        self.pack_start(self.msg, True, True, 0)
+        self.pack_start(self.btn, False, False, 0)
+        self.pack_start(close, False, False, 0)
+        self.set_no_show_all(True)
+        self.kind = None
+
+    def show_msg(self, texto, kind="info", iniciar=False):
+        ctx = self.get_style_context()
+        for k in ("info", "warning", "error"):
+            ctx.remove_class(k)
+        ctx.add_class(kind)
+        cor = {"info": T["rank"], "warning": T["warning"], "error": T["danger"]}[kind]
+        self.icon.set_markup(f'<span foreground="{cor}">●</span>')
+        self.msg.set_text(texto)
+        self.kind = "parado" if iniciar else kind
+        for wdg in (self.icon, self.msg):
+            wdg.show()
+        self.btn.set_visible(iniciar)
+        self.get_children()[-1].show()
+        self.show()
+
+
+# ======================================================================== janela
+class Janela(Gtk.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Avell Fan")
+        self.app = app
+        cls(self, "avell")
+        self.set_default_size(960, 860)
+        try:
+            self.set_icon_from_file(ICON) if os.path.isabs(ICON) else self.set_icon_name(ICON)
+        except GLib.Error:
+            pass
+        self.connect("delete-event", self.on_close)
+        self._sync = False
+
+        # cabeçalho
+        hb = cls(Gtk.HeaderBar(show_close_button=True), "avell-hb")
+        head = Gtk.Box(spacing=12)
+        ic = cls(icon_image(20), "app-icon")
+        ic.set_valign(Gtk.Align.CENTER)
+        head.pack_start(ic, False, False, 0)
+        tt = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        tt.set_valign(Gtk.Align.CENTER)
+        tt.pack_start(label("Avell Fan", "title-app"), False, False, 0)
+        tt.pack_start(label(modelo_notebook(), "sub"), False, False, 0)
+        head.pack_start(tt, False, False, 0)
+        hb.pack_start(head)
+        self.pill = label("", "pill", markup=True)
+        self.pill.set_valign(Gtk.Align.CENTER)
+        hb.pack_end(self.pill)
+        hb.set_custom_title(Gtk.Box())
+        self.set_titlebar(hb)
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.add(outer)
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20, margin=24)
+        outer.pack_start(root, True, True, 0)
+
+        self.banner = Banner()
+        root.pack_start(self.banner, False, False, 0)
+
+        # perfis
+        sec = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        sec.pack_start(label("PERFIL", "overline"), False, False, 0)
+        seg = cls(Gtk.Box(spacing=4, homogeneous=True), "segmented")
+        self.radios = {}
+        grupo = None
+        for nome, titulo, desc in PERFIS_UI:
+            rb = Gtk.RadioButton.new_from_widget(grupo)
+            rb.set_mode(False)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            box.pack_start(label(titulo, "seg-title"), False, False, 0)
+            box.pack_start(label(desc, "seg-desc"), False, False, 0)
+            rb.add(box)
+            rb.connect("toggled", self.on_perfil_toggled, nome)
+            grupo = grupo or rb
+            seg.pack_start(rb, True, True, 0)
+            self.radios[nome] = rb
+        sec.pack_start(seg, False, False, 0)
+        root.pack_start(sec, False, False, 0)
+
+        # leituras
+        grid = Gtk.Grid(column_spacing=12, column_homogeneous=True)
+        self.card_cpu = Card("CPU", C_CPU, "cpu")
+        self.card_gpu = Card("GPU", C_GPU, "gpu")
+        self.card_fan1 = Card("FAN 1", C_FAN, "fan")
+        self.card_fan2 = Card("FAN 2", C_FAN, "fan")
+        for i, c in enumerate((self.card_cpu, self.card_gpu, self.card_fan1, self.card_fan2)):
+            grid.attach(c, i, 0, 1, 1)
+        root.pack_start(grid, False, False, 0)
+
+        # histórico
+        hist = cls(Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10), "card")
+        top = Gtk.Box(spacing=16)
+        top.pack_start(label("Últimos 5 minutos", "h3"), False, False, 0)
+        top.pack_start(Gtk.Box(), True, True, 0)
+        for txt, cor in (("CPU", C_CPU), ("GPU", C_GPU), ("Fan %", C_FAN)):
+            top.pack_start(label(f'<span foreground="{cor}">━</span>  {txt}', "legend", markup=True), False, False, 0)
+        top.pack_start(label(f'<span foreground="{T["danger"]}">┅</span>  Failsafe', "legend", markup=True), False, False, 0)
+        hist.pack_start(top, False, False, 0)
+        self.grafico = Grafico()
+        hist.pack_start(self.grafico, True, True, 0)
+        root.pack_start(hist, False, False, 0)
+
+        # curva
+        cur = cls(Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12), "card")
+        top = Gtk.Box(spacing=12)
+        top.pack_start(label("Curva", "h3"), False, False, 0)
+        tabs = cls(Gtk.Box(spacing=2), "tabs")
+        self.tabs = {}
+        g = None
+        for nome in EDITAVEIS:
+            tb = Gtk.RadioButton.new_with_label_from_widget(g, NOME[nome])
+            tb.set_mode(False)
+            tb.connect("toggled", self.on_tab, nome)
+            g = g or tb
+            tabs.pack_start(tb, False, False, 0)
+            self.tabs[nome] = tb
+        top.pack_start(tabs, False, False, 0)
+        top.pack_start(label("Arraste os pontos · duplo clique adiciona · botão direito remove", "muted"), False, False, 0)
+        cur.pack_start(top, False, False, 0)
+        self.editor = EditorCurva(self.on_curva_editada)
+        cur.pack_start(self.editor, True, True, 0)
+        bt = Gtk.Box(spacing=8)
+        self.lbl_alter = label("", "muted", markup=True)
+        bt.pack_start(self.lbl_alter, True, True, 0)
+        b_padrao = cls(Gtk.Button(label="Restaurar padrão"), "ghost")
+        b_padrao.connect("clicked", self.on_padrao)
+        self.b_desfazer = cls(Gtk.Button(label="Desfazer"), "secondary")
+        self.b_desfazer.connect("clicked", self.on_desfazer)
+        self.b_salvar = cls(Gtk.Button(label="Salvar curva"), "primary")
+        self.b_salvar.connect("clicked", self.on_salvar)
+        for b in (b_padrao, self.b_desfazer, self.b_salvar):
+            bt.pack_start(b, False, False, 0)
+        cur.pack_start(bt, False, False, 0)
+        root.pack_start(cur, True, True, 0)
+
+        # rodapé
+        foot = cls(Gtk.Box(spacing=8), "footer")
+        foot.pack_start(Gtk.Image.new_from_pixbuf(svg_pixbuf(RL_MARK, 16)), False, False, 0)
+        foot.pack_start(label('by <span font_family="Bricolage Grotesque" weight="600" foreground="#f2f1ee">Rota'
+                              '<span foreground="#e77c22">Labs</span></span>', markup=True), False, False, 0)
+        foot.pack_start(Gtk.Box(), True, True, 0)
+        foot.pack_start(label(f"v{VERSION} · open source · GPL-2.0", "mono"), False, False, 0)
+        outer.pack_start(foot, False, False, 0)
+
+        self.carregar_curvas()
+        self.tabs["equilibrado"].set_active(True)
+        self.on_tab(self.tabs["equilibrado"], "equilibrado")
+        self.show_all()
+
+    # ---------------------------------------------------------------- curvas
+    def carregar_curvas(self):
+        cfg = core.load_config()
+        self.curvas_salvas = {n: [list(p) for p in cfg["perfis"][n]] for n in EDITAVEIS}
+        self.curvas_edit = json.loads(json.dumps(self.curvas_salvas))
+        self.editor.failsafe = self.grafico.failsafe = cfg["temp_failsafe"]
+        self.editor.pct_minimo = cfg.get("pct_minimo", 25)
+
+    def aba(self):
+        return next(n for n, tb in self.tabs.items() if tb.get_active())
+
+    def on_tab(self, tb, nome):
+        if tb.get_active():
+            self.editor.set_pontos(self.curvas_edit[nome])
+            self.atualizar_botoes()
+
+    def on_curva_editada(self):
+        self.curvas_edit[self.aba()] = [list(p) for p in self.editor.pontos]
+        self.atualizar_botoes()
+
+    def atualizar_botoes(self):
+        alterados = [NOME[n] for n in EDITAVEIS if self.curvas_edit[n] != self.curvas_salvas[n]]
+        self.b_salvar.set_sensitive(bool(alterados))
+        self.b_desfazer.set_sensitive(bool(alterados))
+        self.lbl_alter.set_markup(f"<i>Não salvo: {', '.join(alterados)}</i>" if alterados
+                                  else f"<i>Curva {NOME[self.aba()]} sem alterações</i>")
+
+    def on_padrao(self, _b):
+        n = self.aba()
+        self.curvas_edit[n] = [list(p) for p in core.DEFAULT_CONFIG["perfis"][n]]
+        self.editor.set_pontos(self.curvas_edit[n])
+        self.atualizar_botoes()
+
+    def on_desfazer(self, _b):
+        self.curvas_edit = json.loads(json.dumps(self.curvas_salvas))
+        self.editor.set_pontos(self.curvas_edit[self.aba()])
+        self.atualizar_botoes()
+
+    def on_salvar(self, _b):
+        user = user_config()
+        user.setdefault("perfis", {})
+        for n in EDITAVEIS:
+            if self.curvas_edit[n] == [list(p) for p in core.DEFAULT_CONFIG["perfis"][n]]:
+                user["perfis"].pop(n, None)
+            else:
+                user["perfis"][n] = self.curvas_edit[n]
+        if not user["perfis"]:
+            del user["perfis"]
+        try:
+            core.validate_user_config(user)
+        except ValueError as e:
+            return self.banner.show_msg(str(e), "error")
+        r = subprocess.run(["pkexec", CORE_BIN, "aplicar-config"], input=json.dumps(user),
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            self.carregar_curvas()
+            self.editor.set_pontos(self.curvas_edit[self.aba()])
+            self.atualizar_botoes()
+            self.banner.show_msg("Curvas salvas. O serviço já está usando.", "info")
+        elif r.returncode in (126, 127):
+            self.banner.show_msg("Salvamento cancelado: a senha não foi confirmada.", "warning")
+        else:
+            self.banner.show_msg(f"Erro ao salvar: {(r.stderr or r.stdout).strip()}", "error")
+
+    # ---------------------------------------------------------------- status
+    def on_perfil_toggled(self, rb, nome):
+        if rb.get_active() and not self._sync:
+            erro = set_perfil(nome)
+            if erro:
+                self.banner.show_msg(erro, "error")
+            self.app.atualizar()
+
+    def atualizar(self, s):
+        if s is None:
+            self.pill.set_markup(f'<span foreground="{T["warning"]}">●</span>  Serviço parado')
+            if self.banner.kind != "parado" or not self.banner.get_visible():
+                self.banner.show_msg("O serviço avell-fan não está rodando. Os fans estão no automático da BIOS.",
+                                     "warning", iniciar=True)
+            for c in (self.card_cpu, self.card_gpu, self.card_fan1, self.card_fan2):
+                c.set(None, "", 0)
+            return
+        if self.banner.kind == "parado" and self.banner.get_visible():
+            self.banner.hide()
+            self.banner.kind = None
+        alvo = "BIOS" if s["alvo_pct"] is None else f"alvo {s['alvo_pct']}%"
+        self.pill.set_markup(f'<span foreground="{T["success"]}">●</span>  Serviço ativo · {alvo}')
+        self.card_cpu.set(s["temp_cpu"], "°C", s["temp_cpu"] / 100)
+        self.card_gpu.set(s["temp_gpu"], "°C", s["temp_gpu"] / 100)
+        self.card_fan1.set(s["fan1_pct"], "%", s["fan1_pct"] / 100)
+        self.card_fan2.set(s["fan2_pct"], "%", s["fan2_pct"] / 100)
+        self.editor.temp_atual = max(s["temp_cpu"], s["temp_gpu"])
+        self.editor.queue_draw()
+        self.grafico.queue_draw()
+        rb = self.radios.get(s["perfil"])
+        if rb and not rb.get_active():
+            self._sync = True
+            rb.set_active(True)
+            self._sync = False
+
+    def on_close(self, *_):
+        if self.app.tem_bandeja:
+            self.hide()  # continua na bandeja
+            return True
+        return False
+
+
+# ======================================================================== painel da bandeja
+class PainelBandeja(Gtk.Window):
+    def __init__(self, app):
+        super().__init__(type=Gtk.WindowType.TOPLEVEL)
+        self.app = app
+        cls(self, "avell-pop")
+        self.set_decorated(False)
+        self.set_resizable(False)
+        self.set_skip_taskbar_hint(True)
+        self.set_skip_pager_hint(True)
+        self.set_keep_above(True)
+        self.set_type_hint(Gdk.WindowTypeHint.POPUP_MENU)
+        self.set_default_size(320, -1)
+        self.connect("focus-out-event", lambda *_: self.hide())
+        self.connect("key-press-event", lambda _w, e: e.keyval == Gdk.KEY_Escape and self.hide())
+        self._sync = False
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin=8)
+        self.add(box)
+        head = cls(Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12), "pop-head")
+        l1 = Gtk.Box(spacing=8)
+        l1.pack_start(label("Avell Fan", "h3"), False, False, 0)
+        l1.pack_start(Gtk.Box(), True, True, 0)
+        self.estado = label("", "legend", markup=True)
+        l1.pack_start(self.estado, False, False, 0)
+        head.pack_start(l1, False, False, 0)
+        g = Gtk.Grid(column_homogeneous=True, column_spacing=8)
+        self.vals = {}
+        for i, (k, cor) in enumerate((("CPU", C_CPU), ("GPU", C_GPU), ("FAN", C_FAN))):
+            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            col.pack_start(label(k, "overline"), False, False, 0)
+            v = label("—", "pop-big", markup=True)
+            col.pack_start(v, False, False, 0)
+            self.vals[k] = (v, cor)
+            g.attach(col, i, 0, 1, 1)
+        head.pack_start(g, False, False, 0)
+        box.pack_start(head, False, False, 0)
+
+        ov = label("PERFIL", "overline")
+        ov.set_margin_start(12); ov.set_margin_top(8)
+        box.pack_start(ov, False, False, 0)
+        self.items = {}
+        grupo = None
+        for nome, titulo, _ in PERFIS_UI:
+            rb = Gtk.RadioButton.new_with_label_from_widget(grupo, titulo if nome != "auto" else "Automático (BIOS)")
+            rb.set_mode(False)
+            cls(rb, "pop-item")
+            rb.get_child().set_xalign(0)
+            rb.connect("toggled", self.on_item, nome)
+            grupo = grupo or rb
+            box.pack_start(rb, False, False, 0)
+            self.items[nome] = rb
+
+        sep = cls(Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2), "pop-sep")
+        sep.set_margin_top(8)
+        abrir = cls(Gtk.Button(label="Abrir janela"), "pop-item")
+        abrir.get_child().set_xalign(0)
+        abrir.connect("clicked", lambda *_: (self.hide(), self.app.activate()))
+        sair = cls(Gtk.Button(label="Sair da interface"), "pop-item", "dim")
+        sair.get_child().set_xalign(0)
+        sair.connect("clicked", lambda *_: self.app.quit())
+        sep.pack_start(abrir, False, False, 0)
+        sep.pack_start(sair, False, False, 0)
+        box.pack_start(sep, False, False, 0)
+        box.show_all()
+
+    def on_item(self, rb, nome):
+        if rb.get_active() and not self._sync:
+            set_perfil(nome)
+            self.app.atualizar()
+
+    def atualizar(self, s):
+        if s is None:
+            self.estado.set_markup(f'<span foreground="{T["warning"]}">●</span> parado')
+            for v, _ in self.vals.values():
+                v.set_text("—")
+            return
+        self.estado.set_markup(f'<span foreground="{T["success"]}">●</span> ativo')
+        fan = max(s["fan1_pct"], s["fan2_pct"])
+        for k, val in (("CPU", f"{s['temp_cpu']}°"), ("GPU", f"{s['temp_gpu']}°"), ("FAN", f"{fan}%")):
+            v, cor = self.vals[k]
+            v.set_markup(f'<span foreground="{cor}">{val}</span>')
+        rb = self.items.get(s["perfil"])
+        if rb and not rb.get_active():
+            self._sync = True
+            rb.set_active(True)
+            self._sync = False
+
+    def mostrar_em(self, x, y, posicao_painel):
+        self.show()
+        w, h = self.get_size()
+        geo = Gdk.Display.get_default().get_monitor_at_point(x, y).get_geometry()
+        # posicao_painel (Gtk.PositionType): BOTTOM=3 → abre acima do ícone
+        if posicao_painel == Gtk.PositionType.BOTTOM:
+            px, py = x - w // 2, y - h - 8
+        elif posicao_painel == Gtk.PositionType.TOP:
+            px, py = x - w // 2, y + 8
+        elif posicao_painel == Gtk.PositionType.LEFT:
+            px, py = x + 8, y - h // 2
+        else:
+            px, py = x - w - 8, y - h // 2
+        px = max(geo.x + 8, min(px, geo.x + geo.width - w - 8))
+        py = max(geo.y + 8, min(py, geo.y + geo.height - h - 8))
+        self.move(px, py)
+        self.present_with_time(Gtk.get_current_event_time())
+
+
+# ======================================================================== app
+class App(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="co.rotalabs.AvellFan")
+        self.janela = None
+        self.painel = None
+        self.status_icon = None
+        self.indicator = None
+        self.bandeja_inicial = "--bandeja" in sys.argv
+        self.hist_pendente = collections.deque(maxlen=HIST_S)
+
+    @property
+    def tem_bandeja(self):
+        return self.status_icon is not None or self.indicator is not None
+
+    def do_startup(self):
+        Gtk.Application.do_startup(self)
+        Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", True)
+        prov = Gtk.CssProvider()
+        prov.load_from_data(CSS.encode())
+        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), prov,
+                                                 Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self.criar_bandeja()
+        if self.tem_bandeja:
+            self.hold()
+        GLib.timeout_add(POLL_MS, self.atualizar)
+
+    def do_activate(self):
+        if self.janela is None:
+            self.janela = Janela(self)
+            self.janela.grafico.hist.extend(self.hist_pendente)
+            if self.bandeja_inicial and self.tem_bandeja:
+                self.janela.hide()
+                self.bandeja_inicial = False
+                return
+        self.janela.show()
+        self.janela.present()
+        self.atualizar()
+
+    def criar_bandeja(self):
+        if XApp is not None:
+            self.painel = PainelBandeja(self)
+            si = XApp.StatusIcon()
+            si.set_name("avell-fan")
+            si.set_icon_name(ICON)
+            si.set_tooltip_text("Avell Fan")
+            si.connect("button-release-event", self.on_tray_click)
+            si.set_visible(True)
+            self.status_icon = si
+        elif AppIndicator is not None:
+            ind = AppIndicator.Indicator.new("avell-fan", ICON, AppIndicator.IndicatorCategory.HARDWARE)
+            ind.set_status(AppIndicator.IndicatorStatus.ACTIVE)
+            menu = Gtk.Menu()
+            for nome, titulo, _ in PERFIS_UI:
+                mi = Gtk.MenuItem(label=titulo)
+                mi.connect("activate", lambda _m, n=nome: (set_perfil(n), self.atualizar()))
+                menu.append(mi)
+            menu.append(Gtk.SeparatorMenuItem())
+            abrir = Gtk.MenuItem(label="Abrir janela")
+            abrir.connect("activate", lambda *_: self.activate())
+            menu.append(abrir)
+            sair = Gtk.MenuItem(label="Sair da interface")
+            sair.connect("activate", lambda *_: self.quit())
+            menu.append(sair)
+            menu.show_all()
+            ind.set_menu(menu)
+            self.indicator = ind
+
+    def on_tray_click(self, _icon, x, y, button, _time, panel_pos):
+        if button == 1:
+            if self.painel.get_visible():
+                self.painel.hide()
+            else:
+                self.atualizar()
+                self.painel.mostrar_em(x, y, panel_pos)
+        elif button == 3:
+            self.activate()
+
+    def atualizar(self):
+        s = read_status()
+        if s is not None:
+            amostra = (s["temp_cpu"], s["temp_gpu"], max(s["fan1_pct"], s["fan2_pct"]))
+            (self.janela.grafico.hist if self.janela else self.hist_pendente).append(amostra)
+        if self.janela is not None and self.janela.get_visible():
+            self.janela.atualizar(s)
+        if self.painel is not None:
+            self.painel.atualizar(s)
+        if self.status_icon is not None:
+            self.status_icon.set_label(f"{s['temp_cpu']}°" if s else "")
+            self.status_icon.set_tooltip_text(
+                f"Avell Fan · {NOME.get(s['perfil'], s['perfil'])} · CPU {s['temp_cpu']}°C · fan "
+                f"{max(s['fan1_pct'], s['fan2_pct'])}%" if s else "Avell Fan · serviço parado")
+        return True
+
+
+if __name__ == "__main__":
+    app = App()
+    sys.exit(app.run([a for a in sys.argv if a != "--bandeja"]))

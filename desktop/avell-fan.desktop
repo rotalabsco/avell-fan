@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Avell Fan
+GenericName=Controle de fans
+Comment=Perfis e curvas das ventoinhas do notebook Avell (Uniwill)
+Exec=avell-fan-gui
+Icon=avell-fan
+Terminal=false
+Categories=System;Settings;HardwareSettings;
+Keywords=fan;ventoinha;cooler;temperatura;avell;uniwill;
+StartupWMClass=avell-fan-gui

@@ -1,0 +1,5 @@
+# Reduzido pelo avell-fan: só o necessário para Uniwill (original em Kbuild.orig)
+obj-m += tuxedo_keyboard.o
+obj-m += uniwill_wmi.o
+obj-y += tuxedo_compatibility_check/
+obj-y += tuxedo_io/
