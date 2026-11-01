@@ -728,7 +728,8 @@ class PainelBandeja(Gtk.Window):
         self.set_skip_taskbar_hint(True)
         self.set_skip_pager_hint(True)
         self.set_keep_above(True)
-        self.set_type_hint(Gdk.WindowTypeHint.POPUP_MENU)
+        # DIALOG (e não POPUP_MENU): no Cinnamon só assim a janela recebe foco e fecha ao clicar fora
+        self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
         self.set_default_size(320, -1)
         self.connect("focus-out-event", lambda *_: self.hide())
         self.connect("key-press-event", lambda _w, e: e.keyval == Gdk.KEY_Escape and self.hide())
@@ -868,7 +869,8 @@ class App(Gtk.Application):
             self.painel = PainelBandeja(self)
             si = XApp.StatusIcon()
             si.set_name("avell-fan")
-            si.set_icon_name(ICON)
+            tema = "/usr/local/share/icons/hicolor/scalable/apps/avell-fan.svg"
+            si.set_icon_name("avell-fan" if os.path.exists(tema) else ICON)
             si.set_tooltip_text("Avell Fan")
             si.connect("button-release-event", self.on_tray_click)
             si.set_visible(True)

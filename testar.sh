@@ -11,14 +11,14 @@ fi
 [ "$(id -u)" = 0 ] || { echo "Rode com sudo"; exit 1; }
 if lsmod | grep -q '^uniwill_laptop'; then echo "Remova o uniwill-laptop antes (rmmod uniwill_laptop)"; exit 1; fi
 B=vendor/tuxedo-drivers
-make -s -C "$B" >/dev/null
+(cd "$B" && make >/dev/null 2>&1)
 modprobe sparse-keymap
 modprobe led-class-multicolor
 for m in src/tuxedo_compatibility_check/tuxedo_compatibility_check src/tuxedo_keyboard src/uniwill_wmi src/tuxedo_io/tuxedo_io; do
   n=$(basename $m)
   lsmod | grep -q "^$n " || insmod "$B/$m.ko"
 done
-make -s -C "$B" clean >/dev/null
+(cd "$B" && make clean >/dev/null 2>&1)
 [ -x probe/probe ] || gcc -O2 -I probe -o probe/probe probe/probe.c
 sleep 1
 echo "=== dmesg ==="; dmesg | grep -iE 'tuxedo|uniwill' | tail -20

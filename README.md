@@ -3,6 +3,7 @@
 Controle das ventoinhas (fans/coolers) de notebooks **Avell** no **Linux** (Ubuntu, Linux Mint e derivados). Tem perfis prontos, curva editável e ícone na bandeja. Funciona em notebooks com chassi **Uniwill / Tongfang**, onde o botão de fan e o Control Center só existem no Windows.
 
 ![Janela do Avell Fan: perfis, temperaturas, gráfico e editor de curva](docs/janela.png)
+<sub>Captura com dados de exemplo.</sub>
 
 ## Por que existe
 
