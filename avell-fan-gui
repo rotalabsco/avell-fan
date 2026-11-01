@@ -87,6 +87,8 @@ PERFIS_UI = [("auto", "Automático", "BIOS decide"), ("silencioso", "Silencioso"
              ("equilibrado", "Equilibrado", "Dia a dia"), ("maximo", "Máximo", "100% sempre")]
 NOME = {p[0]: p[1] for p in PERFIS_UI}
 EDITAVEIS = ["silencioso", "equilibrado"]
+CARGAS_UI = [("high_capacity", "Completa", "até 100%"), ("balanced", "Equilibrada", "até ~90%"),
+             ("stationary", "Estacionária", "até ~80%")]
 HIST_S = 300
 POLL_MS = 1000
 
@@ -194,6 +196,8 @@ headerbar.avell-hb button.titlebutton:hover { color: @ink; background: @hover; }
 .tabs button { background: transparent; background-image: none; border: none; border-radius: ${r_sm_m}px; box-shadow: none;
   text-shadow: none; color: @ink2; padding: 4px 12px; min-height: 30px; font-weight: 500; }
 .tabs button:checked { background: @hover; color: @ink; }
+headerbar .tabs { padding: 3px; margin: 0; }
+headerbar .tabs button { min-height: 30px; margin: 0; padding: 0 16px; }
 .card { background: @raised; border: 1px solid @line; border-radius: ${r_lg}px; padding: 16px; }
 .big { font-family: "$titulo"; font-weight: 600; font-size: 36px; }
 .unit { font-size: 14px; color: @ink3; }
@@ -215,6 +219,11 @@ button.ghost { background: transparent; background-image: none; color: @ink2; bo
   min-height: 40px; padding: 0 14px; box-shadow: none; text-shadow: none; font-weight: 500; }
 button.ghost:hover { background: @hover; color: @ink; }
 button:disabled { opacity: 0.45; }
+combobox button { background: @sunken; background-image: none; border: 1px solid @line; border-radius: ${r_md}px;
+  box-shadow: none; text-shadow: none; color: @ink; min-height: 36px; padding: 0 10px; }
+combobox button:hover { background: @hover; }
+combobox menu, combobox window menu { background: @raised; color: @ink; }
+.energia-linha { min-height: 36px; }
 .banner { border-radius: ${r_md}px; padding: 10px 14px; }
 .banner.warning { background: @warning_soft; border: 1px solid @warning_line; }
 .banner.error { background: @danger_soft; border: 1px solid @danger_line; }
@@ -568,7 +577,13 @@ class Janela(Gtk.ApplicationWindow):
         super().__init__(application=app, title="Avell Fan")
         self.app = app
         cls(self, "avell")
-        self.set_default_size(960, 860)
+        # altura cheia (sem rolagem) quando a tela comporta; senão rola
+        try:
+            mon = Gdk.Display.get_default().get_primary_monitor() or Gdk.Display.get_default().get_monitor(0)
+            alt_tela = mon.get_workarea().height
+        except Exception:
+            alt_tela = 900
+        self.set_default_size(960, -1)
         try:
             self.set_icon_from_file(ICON) if os.path.isabs(ICON) else self.set_icon_name(ICON)
         except GLib.Error:
@@ -591,16 +606,40 @@ class Janela(Gtk.ApplicationWindow):
         self.pill = label("", "pill", markup=True)
         self.pill.set_valign(Gtk.Align.CENTER)
         hb.pack_end(self.pill)
-        hb.set_custom_title(Gtk.Box())
+        # abas das seções no centro do cabeçalho
+        abas = cls(Gtk.Box(spacing=2), "tabs")
+        abas.set_valign(Gtk.Align.CENTER)
+        self.secoes = {}
+        g = None
+        for nome, titulo in (("ventoinhas", "Ventoinhas"), ("energia", "Energia")):
+            tb = Gtk.RadioButton.new_with_label_from_widget(g, titulo)
+            tb.set_mode(False)
+            tb.connect("toggled", lambda b, n=nome: b.get_active() and self.stack.set_visible_child_name(n))
+            g = g or tb
+            abas.pack_start(tb, False, False, 0)
+            self.secoes[nome] = tb
+        hb.set_custom_title(abas)
         self.set_titlebar(hb)
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.add(outer)
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20, margin=24)
-        outer.pack_start(root, True, True, 0)
+        # cresce até o conteúdo; só rola se a tela for menor que a janela
+        rolagem = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, propagate_natural_height=True,
+                                     max_content_height=max(480, alt_tela - 160))
+        rolagem.add(root)
+        outer.pack_start(rolagem, True, True, 0)
 
         self.banner = Banner()
         root.pack_start(self.banner, False, False, 0)
+        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, transition_duration=120,
+                               vhomogeneous=False)
+        root.pack_start(self.stack, True, True, 0)
+        fans = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
+        self.stack.add_named(fans, "ventoinhas")
+        pag_energia = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
+        self.stack.add_named(pag_energia, "energia")
+        root = fans  # as seções abaixo vão para a aba Ventoinhas
 
         # perfis
         sec = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -677,6 +716,7 @@ class Janela(Gtk.ApplicationWindow):
             bt.pack_start(b, False, False, 0)
         cur.pack_start(bt, False, False, 0)
         root.pack_start(cur, True, True, 0)
+        pag_energia.pack_start(self.criar_energia(), False, False, 0)
 
         # rodapé
         foot = cls(Gtk.Box(spacing=8), "footer")
@@ -688,6 +728,7 @@ class Janela(Gtk.ApplicationWindow):
         outer.pack_start(foot, False, False, 0)
 
         self.carregar_curvas()
+        self.carregar_energia()
         self.tabs["equilibrado"].set_active(True)
         self.on_tab(self.tabs["equilibrado"], "equilibrado")
         self.show_all()
@@ -756,6 +797,140 @@ class Janela(Gtk.ApplicationWindow):
         else:
             self.banner.show_msg(f"Erro ao salvar: {(r.stderr or r.stdout).strip()}", "error")
 
+    # ---------------------------------------------------------------- energia
+    def criar_energia(self):
+        card = cls(Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14), "card")
+        top = Gtk.Box(spacing=12)
+        top.pack_start(label("Energia", "h3"), False, False, 0)
+        top.pack_start(Gtk.Box(), True, True, 0)
+        self.lbl_energia = label("", "legend", markup=True)
+        top.pack_start(self.lbl_energia, False, False, 0)
+        card.pack_start(top, False, False, 0)
+
+        cols = Gtk.Box(spacing=24, homogeneous=True)
+        # limite de carga
+        esq = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        esq.pack_start(label("LIMITE DE CARGA DA BATERIA", "overline"), False, False, 0)
+        self.tem_carga = core.carga_atual() is not None
+        if self.tem_carga:
+            seg = cls(Gtk.Box(spacing=4, homogeneous=True), "segmented")
+            self.cargas = {}
+            g = None
+            for nome, titulo, desc in CARGAS_UI:
+                rb = Gtk.RadioButton.new_from_widget(g)
+                rb.set_mode(False)
+                b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                b.pack_start(label(titulo, "seg-title"), False, False, 0)
+                b.pack_start(label(desc, "seg-desc"), False, False, 0)
+                rb.add(b)
+                rb.connect("toggled", lambda r, *_: r.get_active() and self.atualizar_energia_botoes())
+                g = g or rb
+                seg.pack_start(rb, True, True, 0)
+                self.cargas[nome] = rb
+            esq.pack_start(seg, False, False, 0)
+            dica = label("Fica quase sempre na tomada? Estacionária segura a carga em ~80% e a bateria dura mais anos.",
+                         "muted")
+        else:
+            dica = label("O driver não expõe o limite de carga neste notebook.", "muted")
+        dica.set_line_wrap(True)
+        esq.pack_start(dica, False, False, 0)
+        cols.pack_start(esq, True, True, 0)
+
+        # perfil automático pela fonte de energia
+        dir_ = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        dir_.pack_start(label("TROCAR DE PERFIL SOZINHO", "overline"), False, False, 0)
+        grid = Gtk.Grid(column_spacing=12, row_spacing=8)
+        self.combos = {}
+        for i, (chave, txt) in enumerate((("perfil_tomada", "Ao ligar na tomada"),
+                                          ("perfil_bateria", "Ao tirar da tomada"))):
+            l = label(txt, "ink2")
+            l.set_valign(Gtk.Align.CENTER)
+            grid.attach(l, 0, i, 1, 1)
+            cb = Gtk.ComboBoxText(hexpand=True)
+            cb.append("", "Não trocar")
+            for nome, titulo, _ in PERFIS_UI:
+                cb.append(nome, titulo)
+            cb.connect("changed", lambda *_: self.atualizar_energia_botoes())
+            grid.attach(cb, 1, i, 1, 1)
+            self.combos[chave] = cb
+        dir_.pack_start(grid, False, False, 0)
+        cols.pack_start(dir_, True, True, 0)
+        card.pack_start(cols, False, False, 0)
+
+        bt = Gtk.Box(spacing=8)
+        self.lbl_energia_alter = label("", "muted", markup=True)
+        bt.pack_start(self.lbl_energia_alter, True, True, 0)
+        self.b_energia_desfazer = cls(Gtk.Button(label="Desfazer"), "secondary")
+        self.b_energia_desfazer.connect("clicked", lambda *_: self.carregar_energia())
+        self.b_energia_salvar = cls(Gtk.Button(label="Salvar energia"), "primary")
+        self.b_energia_salvar.connect("clicked", self.on_salvar_energia)
+        bt.pack_start(self.b_energia_desfazer, False, False, 0)
+        bt.pack_start(self.b_energia_salvar, False, False, 0)
+        card.pack_start(bt, False, False, 0)
+        return card
+
+    def energia_editada(self):
+        e = {k: (cb.get_active_id() or None) for k, cb in self.combos.items()}
+        if self.tem_carga:
+            e["carga"] = next(n for n, rb in self.cargas.items() if rb.get_active())
+        return e
+
+    def carregar_energia(self):
+        cfg = core.load_config()
+        self._carregando = True
+        for k, cb in self.combos.items():
+            cb.set_active_id(cfg.get(k) or "")
+        self.energia_salva = {k: cfg.get(k) for k in self.combos}
+        if self.tem_carga:
+            # sem "carga" na config, mostra o que está no EC agora
+            atual = cfg.get("carga") or core.carga_atual()
+            if atual in self.cargas:
+                self.cargas[atual].set_active(True)
+            self.energia_salva["carga"] = atual
+        self._carregando = False
+        self.atualizar_energia_botoes()
+
+    def atualizar_energia_botoes(self):
+        if getattr(self, "_carregando", False) or not hasattr(self, "energia_salva"):
+            return
+        mudou = self.energia_editada() != self.energia_salva
+        self.b_energia_salvar.set_sensitive(mudou)
+        self.b_energia_desfazer.set_sensitive(mudou)
+        self.lbl_energia_alter.set_markup("<i>Não salvo</i>" if mudou else "")
+
+    def on_salvar_energia(self, _b):
+        user = user_config()
+        for k, v in self.energia_editada().items():
+            if v is None:
+                user.pop(k, None)
+            else:
+                user[k] = v
+        try:
+            core.validate_user_config(user)
+        except ValueError as e:
+            return self.banner.show_msg(str(e), "error")
+        r = subprocess.run(["pkexec", CORE_BIN, "aplicar-config"], input=json.dumps(user),
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            self.carregar_energia()
+            self.banner.show_msg("Energia salva. O limite de carga já vale.", "info")
+        elif r.returncode in (126, 127):
+            self.banner.show_msg("Salvamento cancelado: a senha não foi confirmada.", "warning")
+        else:
+            self.banner.show_msg(f"Erro ao salvar: {(r.stderr or r.stdout).strip()}", "error")
+
+    def mostrar_energia(self):
+        tomada, bat, estado = core.energia()
+        partes = []
+        if tomada is not None:
+            partes.append(f'<span foreground="{T["success"] if tomada else T["warning"]}">●</span>  '
+                          + ("Na tomada" if tomada else "Na bateria"))
+        if bat is not None:
+            est = {"Charging": "carregando", "Discharging": "descarregando", "Full": "carregada",
+                   "Not charging": "sem carregar"}.get(estado, "")
+            partes.append(f"bateria {bat}%" + (f" · {est}" if est else ""))
+        self.lbl_energia.set_markup(" · ".join(partes))
+
     # ---------------------------------------------------------------- status
     def on_perfil_toggled(self, rb, nome):
         if rb.get_active() and not self._sync:
@@ -765,6 +940,7 @@ class Janela(Gtk.ApplicationWindow):
             self.app.atualizar()
 
     def atualizar(self, s):
+        self.mostrar_energia()
         if s is None:
             self.pill.set_markup(f'<span foreground="{T["warning"]}">●</span>  Serviço parado')
             if self.banner.kind != "parado" or not self.banner.get_visible():

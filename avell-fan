@@ -8,6 +8,8 @@ Comandos:
   avell-fan daemon              loop de controle (root; normalmente via systemd)
   avell-fan auto                devolve os fans para o controle automático da BIOS (root)
   avell-fan testar <pct> [seg]  força os dois fans em <pct>% por alguns segundos e volta pro auto (root)
+  avell-fan carga [modo]        mostra ou define o limite de carga da bateria (definir: root)
+                                high_capacity (~100%), balanced (~90%), stationary (~80%)
   avell-fan botao               mostra as teclas recebidas pelo "TUXEDO Keyboard" (root) para achar o botão de fan
 """
 import array
@@ -40,6 +42,10 @@ PERFIL_FILE = f"{RUN_DIR}/perfil"
 STATUS_FILE = f"{RUN_DIR}/status.json"
 PERSIST_FILE = "/var/lib/avell-fan/perfil"
 CONFIG_FILE = "/etc/avell-fan.json"
+CARGA_DIR = "/sys/devices/platform/tuxedo_keyboard/charging_profile"
+POWER_DIR = "/sys/class/power_supply"
+# perfis de carga do EC Uniwill (tuxedo_keyboard): limite aproximado da bateria
+CARGAS = {"high_capacity": 100, "balanced": 90, "stationary": 80}
 
 DEFAULT_CONFIG = {
     "perfil_padrao": "equilibrado",
@@ -60,6 +66,9 @@ DEFAULT_CONFIG = {
     "pct_minimo": 25,             # nunca manda menos que isso no modo manual (fan parado = risco)
     "reaplicar_s": 30,            # regrava a velocidade periodicamente (EC pode resetar após suspend)
     "botao_keycode": None,        # preencher depois de descobrir com "avell-fan botao"
+    "carga": None,                # limite da bateria: high_capacity (100%) | balanced (90%) | stationary (80%); None = não mexe
+    "perfil_tomada": None,        # perfil aplicado ao ligar na tomada; None = não troca
+    "perfil_bateria": None,       # perfil aplicado ao tirar da tomada; None = não troca
 }
 
 
@@ -90,6 +99,14 @@ def validate_user_config(user):
     pm = user.get("pct_minimo", 25)
     if not isinstance(pm, (int, float)) or not 15 <= pm <= 100:
         raise ValueError("pct_minimo deve ficar entre 15 e 100")
+    carga = user.get("carga")
+    if carga is not None and carga not in CARGAS:
+        raise ValueError(f"carga deve ser {', '.join(CARGAS)} ou null")
+    validos = {"auto"} | set(DEFAULT_CONFIG["perfis"]) | set(perfis)
+    for k in ("perfil_tomada", "perfil_bateria"):
+        v = user.get(k)
+        if v is not None and v not in validos:
+            raise ValueError(f"{k}: perfil desconhecido {v!r}")
 
 
 def load_config():
@@ -156,6 +173,56 @@ def curve(points, temp):
                 return max(p0, p1)
             return p0 + (p1 - p0) * (temp - t0) / (t1 - t0)
     return pts[-1][1]
+
+
+# ---------------------------------------------------------------- bateria e energia
+def carga_atual():
+    """Perfil de carga atual do EC, ou None se o driver não expõe."""
+    try:
+        with open(f"{CARGA_DIR}/charging_profile") as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def aplicar_carga(cfg):
+    alvo = cfg.get("carga")
+    atual = carga_atual()
+    if alvo is None or atual is None or alvo == atual:
+        return
+    try:
+        with open(f"{CARGA_DIR}/charging_profile", "w") as f:
+            f.write(alvo)
+        print(f"carga da bateria: {atual} -> {alvo}", flush=True)
+    except OSError as e:
+        print(f"não consegui mudar a carga da bateria: {e}", file=sys.stderr, flush=True)
+
+
+def _ps_ler(nome, campo):
+    try:
+        with open(f"{POWER_DIR}/{nome}/{campo}") as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def energia():
+    """(na_tomada, bateria_pct, estado_bateria); None onde não houver informação."""
+    tomada = bat = estado = None
+    try:
+        nomes = sorted(os.listdir(POWER_DIR))
+    except OSError:
+        nomes = []
+    for n in nomes:
+        tipo = _ps_ler(n, "type")
+        if tipo == "Mains" and tomada is None:
+            on = _ps_ler(n, "online")
+            tomada = None if on is None else on == "1"
+        elif tipo == "Battery" and bat is None:
+            cap = _ps_ler(n, "capacity")
+            bat = int(cap) if cap and cap.isdigit() else None
+            estado = _ps_ler(n, "status")
+    return tomada, bat, estado
 
 
 # ---------------------------------------------------------------- estado compartilhado
@@ -277,6 +344,9 @@ def daemon():
 
     threading.Thread(target=button_thread, args=(cfg,), daemon=True).start()
 
+    aplicar_carga(cfg)
+    ultima_tomada = None  # None: ainda não leu; a primeira leitura já aplica o perfil da fonte atual
+
     atual_pct = None
     temp_do_ultimo_aumento = 0
     ultimo_write = 0
@@ -301,7 +371,15 @@ def daemon():
                 cfg_mtime = config_mtime()
                 cfg = load_config()
                 atual_pct = None
+                aplicar_carga(cfg)
                 print("config recarregada", flush=True)
+            tomada, bat_pct, bat_estado = energia()
+            if tomada is not None and tomada != ultima_tomada:
+                auto_perfil = cfg.get("perfil_tomada" if tomada else "perfil_bateria")
+                if auto_perfil and (auto_perfil == "auto" or auto_perfil in cfg["perfis"]):
+                    write_perfil(auto_perfil)
+                    print(f"{'tomada' if tomada else 'bateria'}: perfil {auto_perfil}", flush=True)
+                ultima_tomada = tomada
             perfil = read_perfil(cfg)
             if temp >= cfg["temp_failsafe"]:
                 em_failsafe = True
@@ -352,7 +430,8 @@ def daemon():
                 with open(STATUS_FILE + ".tmp", "w") as f:
                     json.dump({"perfil": perfil, "temp_cpu": t_cpu, "temp_gpu": t_gpu,
                                "alvo_pct": None if atual_pct is None else round(atual_pct),
-                               "fan1_pct": f1, "fan2_pct": f2, "ts": time.time()}, f)
+                               "fan1_pct": f1, "fan2_pct": f2, "tomada": tomada, "bateria_pct": bat_pct,
+                               "bateria_estado": bat_estado, "carga": carga_atual(), "ts": time.time()}, f)
                 os.replace(STATUS_FILE + ".tmp", STATUS_FILE)
             except OSError:
                 pass
@@ -372,6 +451,10 @@ def cmd_status():
         print(f"temp:     CPU {s['temp_cpu']}°C  GPU {s['temp_gpu']}°C")
         alvo = "BIOS" if s["alvo_pct"] is None else f"{s['alvo_pct']}%"
         print(f"fans:     {s['fan1_pct']}% / {s['fan2_pct']}%   (alvo: {alvo})")
+        if s.get("bateria_pct") is not None:
+            fonte = "tomada" if s.get("tomada") else "bateria"
+            lim = CARGAS.get(s.get("carga"))
+            print(f"energia:  {fonte} · bateria {s['bateria_pct']}%" + (f" · carga até ~{lim}% ({s['carga']})" if lim else ""))
     except FileNotFoundError:
         if os.geteuid() != 0:
             sys.exit("daemon não está rodando; use sudo para ler direto do EC")
@@ -418,7 +501,34 @@ def main():
             json.dump(user, f, indent=2, ensure_ascii=False)
         os.chmod(tmp, 0o644)
         os.replace(tmp, CONFIG_FILE)
+        aplicar_carga(load_config())  # vale na hora, mesmo com o serviço parado
         print("config salva")
+    elif cmd == "carga":
+        if len(args) < 2:
+            atual = carga_atual()
+            if atual is None:
+                sys.exit("o driver não expõe o perfil de carga neste notebook")
+            print(f"carga: {atual} (até ~{CARGAS.get(atual, '?')}%)")
+            print("opções: " + ", ".join(f"{k} (~{v}%)" for k, v in CARGAS.items()))
+            return
+        if args[1] not in CARGAS:
+            sys.exit(f"uso: avell-fan carga <{'|'.join(CARGAS)}>")
+        if os.geteuid() != 0:
+            sys.exit("precisa de root: sudo avell-fan carga " + args[1])
+        try:
+            with open(CONFIG_FILE) as f:
+                user = json.load(f)
+        except FileNotFoundError:
+            user = {}
+        user["carga"] = args[1]
+        validate_user_config(user)
+        tmp = CONFIG_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(user, f, indent=2, ensure_ascii=False)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, CONFIG_FILE)
+        aplicar_carga(load_config())  # aplica já, mesmo sem o serviço
+        print(f"carga: {args[1]} (até ~{CARGAS[args[1]]}%), salvo em {CONFIG_FILE}")
     elif cmd == "auto":
         EC().auto()
         print("fans no automático da BIOS")

@@ -37,6 +37,8 @@ sudo ./instalar.sh               # DKMS + serviço systemd
 avell-fan status
 avell-fan perfil silencioso      # auto | silencioso | equilibrado | maximo
 avell-fan proximo
+avell-fan carga                  # mostra o limite de carga da bateria
+sudo avell-fan carga stationary  # high_capacity (~100%) | balanced (~90%) | stationary (~80%)
 ```
 
 As curvas, o ciclo do botão e os limites ficam em `/etc/avell-fan.json`. Ele sobrescreve só as chaves que você puser lá. Exemplo:
@@ -46,6 +48,16 @@ As curvas, o ciclo do botão e os limites ficam em `/etc/avell-fan.json`. Ele so
 ```
 
 Os dois fans seguem a **maior** das duas temperaturas (CPU/GPU), porque eles dividem os heatpipes.
+
+## Bateria e energia
+
+- **Limite de carga:** o `tuxedo_keyboard` expõe `/sys/devices/platform/tuxedo_keyboard/charging_profile/charging_profile`, que grava os bits 4–5 de um registrador do EC: `high_capacity` (0, carga completa), `balanced` (1, ~90 %) e `stationary` (2, ~80 %). Os percentuais são aproximados: quem decide é o firmware.
+- O daemon aplica a chave `carga` do `/etc/avell-fan.json` ao iniciar e sempre que a config muda. O `aplicar-config` (usado pela interface) e o `avell-fan carga <modo>` também aplicam na hora, então o limite vale mesmo com o serviço parado. Sem a chave `carga`, ninguém mexe no que está no EC.
+- **Perfil por fonte de energia:** o daemon lê `/sys/class/power_supply/*/online` (tipo `Mains`) a cada ciclo. Ao iniciar e a cada mudança de tomada↔bateria, aplica `perfil_tomada` ou `perfil_bateria`, se definidos. Entre uma mudança e outra, a escolha manual continua valendo.
+
+```json
+{ "carga": "stationary", "perfil_tomada": "equilibrado", "perfil_bateria": "silencioso" }
+```
 
 ## Botão de fan (a mapear)
 

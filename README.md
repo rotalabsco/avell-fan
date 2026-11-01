@@ -14,10 +14,14 @@ O Avell Fan troca o Control Center por um serviço com interface própria:
 - **4 perfis:** Automático (BIOS), Silencioso, Equilibrado e Máximo;
 - **curvas editáveis:** você arrasta os pontos de temperatura × velocidade;
 - **temperaturas da CPU e da GPU e rotação dos dois fans**, com gráfico dos últimos 5 minutos;
+- **limite de carga da bateria** (100 %, ~90 % ou ~80 %): para quem vive na tomada, a bateria dura mais anos;
+- **troca de perfil automática** ao ligar ou tirar da tomada (ex.: silencioso na bateria);
 - **ícone na bandeja** para trocar de perfil com um clique;
 - **comando de terminal** (`avell-fan`) para scripts.
 
 <img src="docs/bandeja.png" alt="Painel da bandeja com temperaturas e perfis" width="280">
+
+![Aba Energia: limite de carga da bateria e perfil automático na tomada e na bateria](docs/energia.png)
 
 ## Compatibilidade
 
@@ -73,6 +77,8 @@ Guia completo, com a tabela de tokens e um JSON Schema para o editor: [docs/TEMA
 avell-fan status                 # temperaturas, velocidades e perfil
 avell-fan perfil silencioso      # auto | silencioso | equilibrado | maximo
 avell-fan proximo                # alterna para o próximo perfil
+avell-fan carga                  # mostra o limite de carga da bateria
+sudo avell-fan carga stationary  # high_capacity (~100%) | balanced (~90%) | stationary (~80%)
 ```
 
 Trocar de perfil não pede senha. Salvar curvas novas pede a senha de administrador uma vez.
@@ -101,14 +107,17 @@ O acesso ao hardware usa os módulos `tuxedo_io`, `uniwill_wmi` e `tuxedo_keyboa
 
 ## Roadmap
 
+- [x] Limite de carga da bateria e perfil automático na tomada/bateria
 - [ ] Mapear o botão físico de fan para alternar os perfis
+- [ ] Brilho e cor do teclado RGB
+- [ ] CI compilando os drivers contra kernels novos
 - [ ] Testar em outros modelos Avell
 - [x] Tema claro e temas personalizáveis ([docs/TEMA.md](docs/TEMA.md))
 - [ ] Pacote `.deb`
 
 ## English
 
-**Avell Fan** is a fan control app for **Avell laptops on Linux** (Uniwill/Tongfang chassis). It is a replacement for the Windows-only Control Center. It provides a themeable GTK3 window (JSON design tokens, dark and light themes included) and a tray panel, fan profiles (BIOS auto, silent, balanced, max), editable temperature curves, and CPU/GPU temperature monitoring. It also has a systemd service with a 90 °C failsafe and automatic fallback to BIOS control. Hardware access goes through the `tuxedo_io` / `uniwill_wmi` modules from [tuxedo-drivers](https://github.com/tuxedocomputers/tuxedo-drivers), built via DKMS. Tested on the Avell C62 LIV. Reports from other Uniwill-based laptops are welcome.
+**Avell Fan** is a fan control app for **Avell laptops on Linux** (Uniwill/Tongfang chassis). It is a replacement for the Windows-only Control Center. It provides a themeable GTK3 window (JSON design tokens, dark and light themes included) and a tray panel, fan profiles (BIOS auto, silent, balanced, max), editable temperature curves, CPU/GPU temperature monitoring, a battery charge limit (100/90/80 %) and automatic profile switching on AC/battery. It also has a systemd service with a 90 °C failsafe and automatic fallback to BIOS control. Hardware access goes through the `tuxedo_io` / `uniwill_wmi` modules from [tuxedo-drivers](https://github.com/tuxedocomputers/tuxedo-drivers), built via DKMS. Tested on the Avell C62 LIV. Reports from other Uniwill-based laptops are welcome.
 
 ## Licença e créditos
 
