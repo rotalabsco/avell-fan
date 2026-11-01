@@ -6,6 +6,9 @@ Salvar curvas usa pkexec -> "avell-fan aplicar-config".
 
   avell-fan-gui            abre a janela
   avell-fan-gui --bandeja  inicia só no ícone da bandeja (usado no autostart)
+  avell-fan-gui --tema rotalabs-claro   usa outro tema (nome em temas/ ou caminho de um .json)
+
+Tema: --tema > ~/.config/avell-fan/tema.json > temas/rotalabs-escuro.json. Ver docs/TEMA.md.
 """
 import collections
 import ctypes
@@ -15,6 +18,8 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import re
+import string
 import subprocess
 import sys
 import time
@@ -85,48 +90,114 @@ EDITAVEIS = ["silencioso", "equilibrado"]
 HIST_S = 300
 POLL_MS = 1000
 
-# ---- RotaLabs DS v2 (dark) — tokens de src/styles/globals.css
-T = {
-    "bg": "#0b0c0d", "raised": "#121416", "sunken": "#07080a", "hover": "#1a1d20",
-    "line": "#23272b", "line_strong": "#3a4248",
-    "ink": "#f2f1ee", "ink2": "#a9aeb2", "ink3": "#80878c",
-    "orange": "#e77c22", "accent": "#f28a2e", "accent_hover": "#ff9a42", "accent_soft": "#2a1708",
-    "on_accent": "#0b0c0d", "rank": "#7aa2ff", "wp": "#5fd0b0",
-    "success": "#4cc38a", "warning": "#f2b441", "danger": "#f0655a",
-}
-C_CPU, C_GPU, C_FAN = T["accent"], T["wp"], T["rank"]
+# ---- Tema (tokens do RotaLabs DS por padrão). Arquivos em temas/*.json; documentação em docs/TEMA.md.
+TEMA_PADRAO = "rotalabs-escuro"
+TEMA_USUARIO = os.path.expanduser("~/.config/avell-fan/tema.json")
+CORES_OBRIGATORIAS = ["bg", "raised", "sunken", "hover", "line", "line-strong", "ink", "ink-2", "ink-3",
+                      "orange", "accent", "accent-hover", "accent-soft", "on-accent", "cpu", "gpu", "fan", "info",
+                      "success", "warning", "warning-soft", "warning-line", "danger", "danger-soft", "danger-line",
+                      "mark-ink"]
 
-CSS = """
-* { font-family: "Geist", sans-serif; }
+
+def _arquivo_tema(ref):
+    if ref.endswith(".json") or os.sep in ref:
+        return os.path.expanduser(ref)
+    return _asset("temas", ref + ".json")
+
+
+def _ler_tema(ref, visto=()):
+    caminho = _arquivo_tema(ref)
+    if not caminho or not os.path.exists(caminho):
+        raise ValueError(f"tema não encontrado: {ref}")
+    if caminho in visto:
+        raise ValueError(f"herança circular em {ref}")
+    with open(caminho) as f:
+        t = json.load(f)
+    # sem "base": herda do padrão (assim um tema pode ter só as cores que mudam)
+    base = t.get("base", None if _arquivo_tema(TEMA_PADRAO) == caminho else TEMA_PADRAO)
+    if base:
+        b = _ler_tema(base, visto + (caminho,))
+        for k in ("cores", "fontes", "raios"):
+            b[k] = {**b.get(k, {}), **t.get(k, {})}
+        b.update({k: v for k, v in t.items() if k not in ("cores", "fontes", "raios", "base")})
+        return b
+    return t
+
+
+def _validar_tema(t):
+    cores = t.get("cores", {})
+    falta = [c for c in CORES_OBRIGATORIAS if c not in cores]
+    if falta:
+        raise ValueError("faltam cores: " + ", ".join(falta) + " (use \"base\" para herdar)")
+    for k, v in cores.items():
+        if not (isinstance(v, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", v)):
+            raise ValueError(f"cor {k} inválida: {v!r} (use #rrggbb)")
+    for k in ("titulo", "texto", "mono"):
+        if not isinstance(t.get("fontes", {}).get(k), str):
+            raise ValueError(f"fonte '{k}' ausente")
+    for k in ("sm", "md", "lg"):
+        v = t.get("raios", {}).get(k)
+        if not isinstance(v, (int, float)) or not 0 <= v <= 40:
+            raise ValueError(f"raio '{k}' inválido: {v!r} (0 a 40)")
+
+
+def carregar_tema():
+    ref = None
+    if "--tema" in sys.argv:
+        i = sys.argv.index("--tema")
+        ref = sys.argv[i + 1] if i + 1 < len(sys.argv) else None
+        del sys.argv[i:i + 2]
+    elif os.path.exists(TEMA_USUARIO):
+        ref = TEMA_USUARIO
+    for tentativa in ([ref] if ref else []) + [TEMA_PADRAO]:
+        try:
+            t = _ler_tema(tentativa)
+            _validar_tema(t)
+            return t
+        except (ValueError, OSError) as e:
+            print(f"avell-fan-gui: tema {tentativa} ignorado: {e}", file=sys.stderr)
+    sys.exit("nenhum tema válido encontrado (temas/rotalabs-escuro.json)")
+
+
+TEMA = carregar_tema()
+T = {k.replace("-", "_").replace("ink_2", "ink2").replace("ink_3", "ink3"): v for k, v in TEMA["cores"].items()}
+FONTE = TEMA["fontes"]
+RAIO = TEMA["raios"]
+ESCURO = TEMA.get("esquema", "escuro") == "escuro"
+C_CPU, C_GPU, C_FAN = T["cpu"], T["gpu"], T["fan"]
+
+CSS_TPL = string.Template("""
+* { font-family: "$texto", sans-serif; }
 window.avell, window.avell-pop { background-color: @bg; color: @ink; font-size: 13px; }
-window.avell-pop { border: 1px solid @line_strong; border-radius: 12px; }
+window.avell-pop { border: 1px solid @line_strong; border-radius: ${r_lg_m}px; }
+headerbar.avell-hb, headerbar.avell-hb label { color: @ink; }
 headerbar.avell-hb { background: @raised; background-image: none; border: none; border-bottom: 1px solid @line;
   box-shadow: none; min-height: 60px; padding: 0 12px 0 20px; }
 headerbar.avell-hb button.titlebutton { color: @ink2; background: none; border: none; box-shadow: none; }
 headerbar.avell-hb button.titlebutton:hover { color: @ink; background: @hover; }
-.app-icon { background: @sunken; border: 1px solid @line_strong; border-radius: 8px; padding: 6px; }
-.title-app { font-family: "Bricolage Grotesque"; font-weight: 600; font-size: 18px; }
-.mono { font-family: "Geist Mono"; }
-.sub { font-family: "Geist Mono"; font-size: 11px; color: @ink3; }
-.overline { font-family: "Geist Mono"; font-size: 11px; color: @ink3; }
+.app-icon { background: @sunken; border: 1px solid @line_strong; border-radius: ${r_sm_p}px; padding: 6px; }
+.title-app { font-family: "$titulo"; font-weight: 600; font-size: 18px; }
+.mono { font-family: "$mono"; }
+.sub { font-family: "$mono"; font-size: 11px; color: @ink3; }
+.overline { font-family: "$mono"; font-size: 11px; color: @ink3; }
 .muted { color: @ink3; }
 .ink2 { color: @ink2; }
 .pill { background: @sunken; border: 1px solid @line; border-radius: 9999px; padding: 4px 12px; font-size: 12px; color: @ink2; }
-.segmented { background: @sunken; border: 1px solid @line; border-radius: 12px; padding: 4px; }
-.segmented button { background: transparent; background-image: none; border: 1px solid transparent; border-radius: 9px;
+.segmented { background: @sunken; border: 1px solid @line; border-radius: ${r_lg_m}px; padding: 4px; }
+.segmented button { background: transparent; background-image: none; border: 1px solid transparent; border-radius: ${r_md_m}px;
   box-shadow: none; text-shadow: none; color: @ink; padding: 8px 14px; min-height: 40px; }
 .segmented button:hover { background: @hover; }
 .segmented button:checked { background: @accent_soft; border-color: @orange; color: @accent; }
 .segmented button .seg-title { font-weight: 600; font-size: 14px; }
 .segmented button .seg-desc { font-size: 12px; color: @ink3; }
-.tabs { background: @sunken; border: 1px solid @line; border-radius: 10px; padding: 3px; }
-.tabs button { background: transparent; background-image: none; border: none; border-radius: 7px; box-shadow: none;
+.tabs { background: @sunken; border: 1px solid @line; border-radius: ${r_md}px; padding: 3px; }
+.tabs button { background: transparent; background-image: none; border: none; border-radius: ${r_sm_m}px; box-shadow: none;
   text-shadow: none; color: @ink2; padding: 4px 12px; min-height: 30px; font-weight: 500; }
 .tabs button:checked { background: @hover; color: @ink; }
-.card { background: @raised; border: 1px solid @line; border-radius: 16px; padding: 16px; }
-.big { font-family: "Bricolage Grotesque"; font-weight: 600; font-size: 36px; }
+.card { background: @raised; border: 1px solid @line; border-radius: ${r_lg}px; padding: 16px; }
+.big { font-family: "$titulo"; font-weight: 600; font-size: 36px; }
 .unit { font-size: 14px; color: @ink3; }
-.h3 { font-family: "Bricolage Grotesque"; font-weight: 600; font-size: 15px; }
+.h3 { font-family: "$titulo"; font-weight: 600; font-size: 15px; }
 .legend { font-size: 12px; color: @ink2; }
 progressbar trough { background: @hover; min-height: 4px; border-radius: 9999px; border: none; }
 progressbar progress { min-height: 4px; border-radius: 9999px; border: none; background-image: none; }
@@ -135,30 +206,40 @@ progressbar progress { min-height: 4px; border-radius: 9999px; border: none; bac
 .fan progressbar progress { background: @rank; }
 .off progressbar progress { background: @line_strong; }
 button.primary { background: @orange; background-image: none; color: @on_accent; font-weight: 600; border: none;
-  border-radius: 10px; min-height: 40px; padding: 0 18px; box-shadow: none; text-shadow: none; }
+  border-radius: ${r_md}px; min-height: 40px; padding: 0 18px; box-shadow: none; text-shadow: none; }
 button.primary:hover { background: @accent; }
 button.secondary { background: transparent; background-image: none; color: @ink; border: 1px solid @line_strong;
-  border-radius: 10px; min-height: 40px; padding: 0 14px; box-shadow: none; text-shadow: none; font-weight: 500; }
+  border-radius: ${r_md}px; min-height: 40px; padding: 0 14px; box-shadow: none; text-shadow: none; font-weight: 500; }
 button.secondary:hover { background: @hover; }
-button.ghost { background: transparent; background-image: none; color: @ink2; border: none; border-radius: 10px;
+button.ghost { background: transparent; background-image: none; color: @ink2; border: none; border-radius: ${r_md}px;
   min-height: 40px; padding: 0 14px; box-shadow: none; text-shadow: none; font-weight: 500; }
 button.ghost:hover { background: @hover; color: @ink; }
 button:disabled { opacity: 0.45; }
-.banner { border-radius: 10px; padding: 10px 14px; }
-.banner.warning { background: #1d1608; border: 1px solid #5a4318; }
-.banner.error { background: #22100e; border: 1px solid #5c2621; }
+.banner { border-radius: ${r_md}px; padding: 10px 14px; }
+.banner.warning { background: @warning_soft; border: 1px solid @warning_line; }
+.banner.error { background: @danger_soft; border: 1px solid @danger_line; }
 .banner.info { background: @sunken; border: 1px solid @line; }
 .footer { border-top: 1px solid @line; padding: 10px 24px; font-size: 12px; color: @ink3; }
 .pop-head { border-bottom: 1px solid @line; padding: 12px 12px 14px; }
 .pop-sep { border-top: 1px solid @line; padding-top: 4px; }
-.pop-big { font-family: "Bricolage Grotesque"; font-weight: 600; font-size: 22px; }
-.pop-item { background: transparent; background-image: none; border: none; border-radius: 8px; box-shadow: none;
+.pop-big { font-family: "$titulo"; font-weight: 600; font-size: 22px; }
+.pop-item { background: transparent; background-image: none; border: none; border-radius: ${r_sm_p}px; box-shadow: none;
   text-shadow: none; color: @ink; min-height: 40px; padding: 0 12px; font-size: 14px; }
 .pop-item:hover { background: @hover; }
 .pop-item:checked { background: @accent_soft; color: @accent; font-weight: 600; }
 .pop-item.dim { color: @ink2; }
-"""
-CSS = "".join(f"@define-color {k} {v};\n" for k, v in T.items()) + CSS
+""")
+CSS = "".join(f"@define-color {k} {v};\n" for k, v in T.items()) + CSS_TPL.substitute(
+    titulo=FONTE["titulo"], texto=FONTE["texto"], mono=FONTE["mono"],
+    r_lg=RAIO["lg"], r_lg_m=max(0, RAIO["lg"] - 4), r_md=RAIO["md"], r_md_m=max(0, RAIO["md"] - 1),
+    r_sm_p=RAIO["sm"] + 2, r_sm_m=max(0, RAIO["sm"] + 1))
+
+MARCA_LARANJA = "#e77c22"  # cor da marca RotaLabs: fixa, não segue o tema
+
+
+def rl_mark():
+    return RL_MARK.replace(b"#F2F1EE", T["mark_ink"].encode())
+
 
 RL_MARK = (b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">'
            b'<path d="M15 12 L22 52 L47 32 Z" fill="none" stroke="#F2F1EE" stroke-width="3.5" stroke-linejoin="round"/>'
@@ -240,9 +321,9 @@ def user_config():
         return {}
 
 
-def cairo_font(cr, size, family="Geist Mono"):
+def cairo_font(cr, size, family=None):
     import cairo
-    cr.select_font_face(family, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+    cr.select_font_face(family or FONTE["mono"], cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
     cr.set_font_size(size)
 
 
@@ -307,7 +388,7 @@ class Grafico(Gtk.DrawingArea):
         cr.move_to(x0, y(self.failsafe)); cr.line_to(w, y(self.failsafe)); cr.stroke(); cr.set_dash([])
         n = len(self.hist)
         if n < 2:
-            cr.set_source_rgba(*rgb(T["ink3"])); cairo_font(cr, 12, "Geist")
+            cr.set_source_rgba(*rgb(T["ink3"])); cairo_font(cr, 12, FONTE["texto"])
             cr.move_to(x0 + 12, y0 + gh / 2); cr.show_text("Aguardando leituras…")
             return
         x = lambda i: x0 + gw * (HIST_S - n + i) / (HIST_S - 1)
@@ -470,7 +551,7 @@ class Banner(Gtk.Box):
         for k in ("info", "warning", "error"):
             ctx.remove_class(k)
         ctx.add_class(kind)
-        cor = {"info": T["rank"], "warning": T["warning"], "error": T["danger"]}[kind]
+        cor = {"info": T["info"], "warning": T["warning"], "error": T["danger"]}[kind]
         self.icon.set_markup(f'<span foreground="{cor}">●</span>')
         self.msg.set_text(texto)
         self.kind = "parado" if iniciar else kind
@@ -599,9 +680,9 @@ class Janela(Gtk.ApplicationWindow):
 
         # rodapé
         foot = cls(Gtk.Box(spacing=8), "footer")
-        foot.pack_start(Gtk.Image.new_from_pixbuf(svg_pixbuf(RL_MARK, 16)), False, False, 0)
-        foot.pack_start(label('by <span font_family="Bricolage Grotesque" weight="600" foreground="#f2f1ee">Rota'
-                              '<span foreground="#e77c22">Labs</span></span>', markup=True), False, False, 0)
+        foot.pack_start(Gtk.Image.new_from_pixbuf(svg_pixbuf(rl_mark(), 16)), False, False, 0)
+        foot.pack_start(label(f'by <span font_family="{FONTE["titulo"]}" weight="600" foreground="{T["ink"]}">Rota'
+                              f'<span foreground="{MARCA_LARANJA}">Labs</span></span>', markup=True), False, False, 0)
         foot.pack_start(Gtk.Box(), True, True, 0)
         foot.pack_start(label(f"v{VERSION} · open source · GPL-2.0", "mono"), False, False, 0)
         outer.pack_start(foot, False, False, 0)
@@ -842,7 +923,7 @@ class App(Gtk.Application):
 
     def do_startup(self):
         Gtk.Application.do_startup(self)
-        Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", True)
+        Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", ESCURO)
         prov = Gtk.CssProvider()
         prov.load_from_data(CSS.encode())
         Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), prov,

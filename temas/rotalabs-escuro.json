@@ -1,0 +1,44 @@
+{
+  "$schema": "./tema.schema.json",
+  "nome": "RotaLabs Escuro",
+  "descricao": "Tema padrão. Tokens do RotaLabs DS v2 (dark), os mesmos --ds-* do site rotalabs.co.",
+  "esquema": "escuro",
+  "cores": {
+    "bg": "#0b0c0d",
+    "raised": "#121416",
+    "sunken": "#07080a",
+    "hover": "#1a1d20",
+    "line": "#23272b",
+    "line-strong": "#3a4248",
+    "ink": "#f2f1ee",
+    "ink-2": "#a9aeb2",
+    "ink-3": "#80878c",
+    "orange": "#e77c22",
+    "accent": "#f28a2e",
+    "accent-hover": "#ff9a42",
+    "accent-soft": "#2a1708",
+    "on-accent": "#0b0c0d",
+    "cpu": "#f28a2e",
+    "gpu": "#5fd0b0",
+    "fan": "#7aa2ff",
+    "info": "#7aa2ff",
+    "success": "#4cc38a",
+    "warning": "#f2b441",
+    "warning-soft": "#1d1608",
+    "warning-line": "#5a4318",
+    "danger": "#f0655a",
+    "danger-soft": "#22100e",
+    "danger-line": "#5c2621",
+    "mark-ink": "#f2f1ee"
+  },
+  "fontes": {
+    "titulo": "Bricolage Grotesque",
+    "texto": "Geist",
+    "mono": "Geist Mono"
+  },
+  "raios": {
+    "sm": 6,
+    "md": 10,
+    "lg": 16
+  }
+}

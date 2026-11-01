@@ -51,6 +51,8 @@ install -m 755 avell-fan-gui /usr/local/bin/avell-fan-gui
 install -d "$SHARE/fonts"
 install -m 644 fonts/* "$SHARE/fonts/"
 install -m 644 avell-fan.svg "$SHARE/avell-fan.svg"
+install -d "$SHARE/temas"
+install -m 644 temas/*.json "$SHARE/temas/"
 install -D -m 644 avell-fan.svg /usr/local/share/icons/hicolor/scalable/apps/avell-fan.svg
 install -D -m 644 desktop/avell-fan.desktop /usr/local/share/applications/avell-fan.desktop
 install -D -m 644 desktop/avell-fan-tray.desktop /etc/xdg/autostart/avell-fan-tray.desktop

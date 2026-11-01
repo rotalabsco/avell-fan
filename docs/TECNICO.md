@@ -73,6 +73,7 @@ Para conferir o keycode: `sudo avell-fan botao`. Ele também mostra se o botão 
 | `avell-fan-gui` | interface GTK3 (janela + painel da bandeja), roda como usuário comum |
 | `desktop/` | atalho do menu e autostart da bandeja |
 | `fonts/` | Bricolage Grotesque, Geist e Geist Mono (OFL), carregadas só pelo app |
+| `temas/` | tokens de cor, fonte e raio da interface + JSON Schema ([TEMA.md](TEMA.md)) |
 | `avell-fan.service` | unit systemd |
 | `instalar.sh` / `desinstalar.sh` | instalação via DKMS (`avell-fan-drivers/1.0`) |
 | `testar.sh`, `probe/` | diagnóstico sem instalar: compila, carrega temporariamente e lê o EC |

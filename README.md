@@ -57,6 +57,16 @@ Depois de instalar, abra **Avell Fan** no menu de aplicativos. O ícone da bande
 
 Para remover: `sudo ./desinstalar.sh`.
 
+## Personalizar a aparência
+
+A interface segue o **RotaLabs DS**, mas cores, fontes e cantos vêm de um arquivo JSON. Já vêm dois temas, escuro e claro, e você pode criar o seu declarando só o que muda:
+
+```bash
+avell-fan-gui --tema rotalabs-claro
+```
+
+Guia completo, com a tabela de tokens e um JSON Schema para o editor: [docs/TEMA.md](docs/TEMA.md).
+
 ## Uso pelo terminal
 
 ```bash
@@ -93,12 +103,12 @@ O acesso ao hardware usa os módulos `tuxedo_io`, `uniwill_wmi` e `tuxedo_keyboa
 
 - [ ] Mapear o botão físico de fan para alternar os perfis
 - [ ] Testar em outros modelos Avell
-- [ ] Tema claro na interface
+- [x] Tema claro e temas personalizáveis ([docs/TEMA.md](docs/TEMA.md))
 - [ ] Pacote `.deb`
 
 ## English
 
-**Avell Fan** is a fan control app for **Avell laptops on Linux** (Uniwill/Tongfang chassis). It is a replacement for the Windows-only Control Center. It provides a GTK3 window and a tray panel, fan profiles (BIOS auto, silent, balanced, max), editable temperature curves, and CPU/GPU temperature monitoring. It also has a systemd service with a 90 °C failsafe and automatic fallback to BIOS control. Hardware access goes through the `tuxedo_io` / `uniwill_wmi` modules from [tuxedo-drivers](https://github.com/tuxedocomputers/tuxedo-drivers), built via DKMS. Tested on the Avell C62 LIV. Reports from other Uniwill-based laptops are welcome.
+**Avell Fan** is a fan control app for **Avell laptops on Linux** (Uniwill/Tongfang chassis). It is a replacement for the Windows-only Control Center. It provides a themeable GTK3 window (JSON design tokens, dark and light themes included) and a tray panel, fan profiles (BIOS auto, silent, balanced, max), editable temperature curves, and CPU/GPU temperature monitoring. It also has a systemd service with a 90 °C failsafe and automatic fallback to BIOS control. Hardware access goes through the `tuxedo_io` / `uniwill_wmi` modules from [tuxedo-drivers](https://github.com/tuxedocomputers/tuxedo-drivers), built via DKMS. Tested on the Avell C62 LIV. Reports from other Uniwill-based laptops are welcome.
 
 ## Licença e créditos
 

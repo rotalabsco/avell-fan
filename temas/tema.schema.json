@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/rotalabsco/avell-fan/temas/tema.schema.json",
+  "title": "Tema do Avell Fan",
+  "description": "Cores, fontes e raios da interface. Sem \"base\", herda de rotalabs-escuro: declare só o que muda.",
+  "type": "object",
+  "properties": {
+    "$schema": { "type": "string" },
+    "nome": { "type": "string", "description": "Nome exibido do tema." },
+    "descricao": { "type": "string" },
+    "base": { "type": "string", "description": "Tema herdado: nome em temas/ (ex.: rotalabs-claro) ou caminho de um .json." },
+    "esquema": { "enum": ["escuro", "claro"], "description": "Pede ao GTK a variante escura ou clara (barra de rolagem, diálogos do sistema)." },
+    "cores": {
+      "type": "object",
+      "description": "Tokens no formato #rrggbb. Os nomes seguem o RotaLabs DS (--ds-*).",
+      "additionalProperties": false,
+      "patternProperties": { "^.*$": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" } },
+      "properties": {
+        "bg": { "description": "Fundo da janela." },
+        "raised": { "description": "Fundo de cards e do cabeçalho." },
+        "sunken": { "description": "Fundo rebaixado: seletores e pílulas." },
+        "hover": { "description": "Hover e trilho das barras." },
+        "line": { "description": "Bordas e grades dos gráficos." },
+        "line-strong": { "description": "Bordas de ênfase e botões secundários." },
+        "ink": { "description": "Texto principal." },
+        "ink-2": { "description": "Texto secundário." },
+        "ink-3": { "description": "Texto terciário, rótulos e eixos." },
+        "orange": { "description": "Fundo do botão primário e borda do perfil ativo." },
+        "accent": { "description": "Texto do perfil ativo e hover do botão primário." },
+        "accent-hover": { "description": "Reservado para hover de links." },
+        "accent-soft": { "description": "Fundo do perfil ativo." },
+        "on-accent": { "description": "Texto sobre o botão primário." },
+        "cpu": { "description": "Linha, ponto e barra da CPU; marcador da temperatura atual." },
+        "gpu": { "description": "Linha, ponto e barra da GPU." },
+        "fan": { "description": "Linha do fan e curva do editor." },
+        "info": { "description": "Indicador de avisos informativos." },
+        "success": { "description": "Serviço ativo." },
+        "warning": { "description": "Serviço parado." },
+        "warning-soft": { "description": "Fundo do aviso." },
+        "warning-line": { "description": "Borda do aviso." },
+        "danger": { "description": "Failsafe e erros." },
+        "danger-soft": { "description": "Fundo do aviso de erro." },
+        "danger-line": { "description": "Borda do aviso de erro." },
+        "mark-ink": { "description": "Nós do símbolo RotaLabs no rodapé." }
+      }
+    },
+    "fontes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "titulo": { "type": "string", "description": "Família dos títulos e números grandes." },
+        "texto": { "type": "string", "description": "Família do texto e dos botões." },
+        "mono": { "type": "string", "description": "Família dos rótulos técnicos e eixos." }
+      }
+    },
+    "raios": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sm": { "type": "number", "minimum": 0, "maximum": 40, "description": "Itens de menu e abas." },
+        "md": { "type": "number", "minimum": 0, "maximum": 40, "description": "Botões e avisos." },
+        "lg": { "type": "number", "minimum": 0, "maximum": 40, "description": "Cards e seletor de perfil." }
+      }
+    }
+  },
+  "additionalProperties": false
+}
