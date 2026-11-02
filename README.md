@@ -1,5 +1,9 @@
 # Avell Fan: controle das ventoinhas do notebook Avell no Linux
 
+[![Release](https://img.shields.io/github/v/release/rotalabsco/avell-fan)](https://github.com/rotalabsco/avell-fan/releases/latest) [![CI](https://github.com/rotalabsco/avell-fan/actions/workflows/ci.yml/badge.svg)](https://github.com/rotalabsco/avell-fan/actions/workflows/ci.yml) [![Licença](https://img.shields.io/badge/licen%C3%A7a-GPL--2.0-blue)](LICENSE)
+
+**[Página do projeto](https://rotalabs.co/br/labs/avell-fan)** · **[Baixar o .deb](https://github.com/rotalabsco/avell-fan/releases/latest/download/avell-fan_all.deb)** · um projeto [Rota.Labs](https://rotalabs.co/br/labs)
+
 Controle das ventoinhas (fans/coolers), da bateria e do teclado RGB de notebooks **Avell** no **Linux** (Ubuntu, Linux Mint e derivados). Tem perfis prontos, curva editável e ícone na bandeja. Funciona em notebooks com chassi **Uniwill / Tongfang**, onde o botão de fan e o Control Center só existem no Windows.
 
 ![Janela do Avell Fan: perfis, temperaturas, gráfico e editor de curva](docs/janela.png)
@@ -49,10 +53,10 @@ Requisitos: Ubuntu 22.04+ / Linux Mint 21+ (ou derivados), kernel 6.x ou 7.x e *
 
 ### Pelo pacote .deb (mais fácil)
 
-Baixe o `avell-fan_<versão>_all.deb` em [Releases](https://github.com/rotalabsco/avell-fan/releases) e instale:
+Baixe o [`avell-fan_all.deb`](https://github.com/rotalabsco/avell-fan/releases/latest/download/avell-fan_all.deb) (sempre a última versão; todas estão em [Releases](https://github.com/rotalabsco/avell-fan/releases)) e instale:
 
 ```bash
-sudo apt install ./avell-fan_*_all.deb
+sudo apt install ./avell-fan_all.deb
 ```
 
 O pacote compila os drivers (DKMS), liga o serviço e põe o **Avell Fan** no menu. Se você já tinha instalado pelo `instalar.sh`, o pacote remove a instalação antiga sozinho. Para remover: `sudo apt remove avell-fan`.
@@ -136,7 +140,7 @@ O acesso ao hardware usa os módulos `tuxedo_io`, `uniwill_wmi` e `tuxedo_keyboa
 
 ## English
 
-**Avell Fan** is a fan control app for **Avell laptops on Linux** (Uniwill/Tongfang chassis). It is a replacement for the Windows-only Control Center. It provides a themeable GTK3 window (JSON design tokens, dark and light themes included) and a tray panel, fan profiles (BIOS auto, silent, balanced, max), editable temperature curves, CPU/GPU temperature monitoring, a battery charge limit (100/90/80 %) automatic profile switching on AC/battery, RGB keyboard brightness/color, Fn Lock and the mode button next to the power key. Install with the `.deb` from Releases. It also has a systemd service with a 90 °C failsafe and automatic fallback to BIOS control. Hardware access goes through the `tuxedo_io` / `uniwill_wmi` modules from [tuxedo-drivers](https://github.com/tuxedocomputers/tuxedo-drivers), built via DKMS. Tested on the Avell C62 LIV. Reports from other Uniwill-based laptops are welcome.
+**Avell Fan** is a fan control app for **Avell laptops on Linux** (Uniwill/Tongfang chassis). It is a replacement for the Windows-only Control Center. It provides a themeable GTK3 window (JSON design tokens, dark and light themes included) and a tray panel, fan profiles (BIOS auto, silent, balanced, max), editable temperature curves, CPU/GPU temperature monitoring, a battery charge limit (100/90/80 %) automatic profile switching on AC/battery, RGB keyboard brightness/color, Fn Lock and the mode button next to the power key. Install with the `.deb` from Releases. It also has a systemd service with a 90 °C failsafe and automatic fallback to BIOS control. Hardware access goes through the `tuxedo_io` / `uniwill_wmi` modules from [tuxedo-drivers](https://github.com/tuxedocomputers/tuxedo-drivers), built via DKMS. Tested on the Avell C62 LIV. Reports from other Uniwill-based laptops are welcome. Project page: [rotalabs.co/en/labs/avell-fan](https://rotalabs.co/en/labs/avell-fan).
 
 ## Licença e créditos
 
@@ -147,4 +151,4 @@ O acesso ao hardware usa os módulos `tuxedo_io`, `uniwill_wmi` e `tuxedo_keyboa
 
 ---
 
-Feito pela [RotaLabs](https://rotalabs.co).
+Um projeto [Rota.Labs](https://rotalabs.co/br/labs), da [RotaLabs](https://rotalabs.co).
