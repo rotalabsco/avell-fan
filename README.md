@@ -31,7 +31,7 @@ O Avell Fan troca o Control Center por um serviço com interface própria:
 
 | Modelo | Status |
 |---|---|
-| Avell C62 LIV (i7‑10750H, RTX 2060) | ✅ testado: leitura, escrita, perfis |
+| Avell C62 LIV (i7‑10750H, RTX 2060) | ✅ testado: fans, perfis, limite de carga, botão de modo e luz do botão |
 | Outros Avell com BIOS Uniwill | ❓ provável, não testado |
 | Outros notebooks com chassi Uniwill/Tongfang | ❓ provável, não testado |
 
