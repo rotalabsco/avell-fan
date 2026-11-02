@@ -41,7 +41,9 @@ W_FANAUTO = (_W << 8) | 0x14
 W_PERF_PROF = _iow(0x18)  # bits 0xa0/0x10 do EC 0x0751: modo de energia, que acende a luz do botão de modo
 # modo de energia do EC (uw_perf_profiles_v1) -> bits em 0x0751
 MODOS_ENERGIA = {1: ("economia", 0xA0), 2: ("normal", 0x00), 3: ("turbo", 0x10)}
-MODO_DO_PERFIL = {"silencioso": 1, "equilibrado": 2, "maximo": 3, "auto": 2}
+# luz no Avell C62 LIV: economia apagada, normal fraca, turbo forte. Automático = turbo: a BIOS
+# cuida dos fans com o notebook liberado, como o modo padrão do Control Center no Windows.
+MODO_DO_PERFIL = {"silencioso": 1, "equilibrado": 2, "maximo": 3, "auto": 3}
 RAW_MAX = 200  # escala do EC: 0..200 = 0..100%
 
 # ---------------------------------------------------------------- configuração
@@ -80,7 +82,7 @@ DEFAULT_CONFIG = {
     # Tecla de modo ao lado do power (evento WMI 0xB0): o driver a converte em Meta+Alt+F6 no
     # dispositivo "TUXEDO Keyboard". Só esse dispositivo é lido, então um F6 comum não conta.
     "botao_keycode": 64,          # KEY_F6; null desliga. Para conferir: sudo avell-fan botao
-    # luz do botão de modo acompanha o perfil (silencioso=economia, equilibrado=normal, maximo=turbo).
+    # luz do botão de modo acompanha o perfil (silencioso=economia, equilibrado=normal, maximo/auto=turbo).
     # Esses bits também são o "modo de energia" do EC: em alguns modelos mudam o limite de potência.
     "led_botao": False,
     "carga": None,                # limite da bateria: high_capacity (100%) | balanced (90%) | stationary (80%); None = não mexe

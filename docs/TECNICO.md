@@ -89,7 +89,8 @@ Com o código em mãos:
 A luz do botão segue os bits de "modo de energia" do EC em `0x0751`: `0xa0` economia, `0x00` normal, `0x10` turbo (`uw_perf_profiles_v1`, ioctl `W_UW_PERF_PROF`). O driver altera só esses bits e preserva o `0x40` do fan. No TUXEDO Polaris 15 Gen1, que usa o mesmo chassi, esses bits mudam também o limite de potência. Em outros modelos, o driver diz que eles "controlam principalmente o LED". O Avell não aparece em nenhuma das listas do driver (`profiles_available = 0`), mas a escrita funciona sem essa checagem.
 
 - `sudo avell-fan led-teste [seg]` passa pelos 3 modos, mostra o `0x0751` e restaura o original.
-- `"led_botao": true` (switch na aba Teclado): o serviço põe Silencioso → economia, Equilibrado e Automático → normal, Máximo → turbo, e reaplica se o EC zerar os bits (suspend).
+- No Avell C62 LIV, a luz fica **apagada** em economia, **fraca** em normal e **forte** em turbo (testado em 2026-11-02).
+- `"led_botao": true` (switch na aba Teclado): o serviço põe Silencioso → economia, Equilibrado → normal, Máximo e Automático → turbo. Também reaplica se o EC zerar os bits (suspend). Com o ciclo padrão, o botão percorre apagada → fraca → forte → forte.
 
 ## Senha (pkexec)
 

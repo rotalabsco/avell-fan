@@ -1085,8 +1085,9 @@ class Janela(Gtk.ApplicationWindow):
         linha = Gtk.Box(spacing=12)
         txt = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         txt.pack_start(label("Luz do botão acompanha o perfil", "seg-title"), False, False, 0)
-        d = label("Silencioso: economia · Equilibrado: normal · Máximo: turbo. É o modo de energia do notebook: "
-                  "em alguns modelos também muda o limite de potência da CPU.", "muted")
+        d = label("Silencioso: apagada (economia) · Equilibrado: fraca (normal) · Máximo e Automático: forte "
+                  "(turbo). É o modo de energia do notebook: em alguns modelos também muda o limite de potência "
+                  "da CPU.", "muted")
         d.set_line_wrap(True)
         txt.pack_start(d, False, False, 0)
         linha.pack_start(txt, True, True, 0)
