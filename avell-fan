@@ -445,6 +445,49 @@ def next_perfil(cfg, atual):
     return ciclo[(ciclo.index(atual) + 1) % len(ciclo)] if atual in ciclo else ciclo[0]
 
 
+ULTIMO_BOTAO = [0.0]  # monotonic do último toque recebido como tecla
+
+
+def _acordou_desde(ultimo):
+    """True se o notebook suspendeu desde a última chamada (BOOTTIME avança, MONOTONIC não)."""
+    d = time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
+    return d - ultimo[0] > 1, d
+
+
+def led_thread(get_cfg, stop):
+    """Luz do botão = modo de energia do EC (0x0751). Com led_botao ligado, o firmware passa a tratar
+    o botão sozinho: troca o modo (e a luz) e não manda mais a tecla. Então uma mudança de modo que não
+    foi feita pelo serviço é um toque no botão: avança o perfil e acerta o modo para o novo perfil."""
+    try:
+        ec = EC()
+    except OSError:
+        return
+    esperado = None
+    sono = [time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()]
+    while not stop.is_set():
+        stop.wait(0.3)
+        cfg = get_cfg()
+        if not cfg.get("led_botao"):
+            esperado = None
+            continue
+        try:
+            acordou, sono[0] = _acordou_desde(sono)
+            perfil = read_perfil(cfg)
+            atual = ec.modo_energia()
+            if esperado is not None and atual != esperado and not acordou \
+                    and time.monotonic() - ULTIMO_BOTAO[0] > 2:
+                perfil = next_perfil(cfg, perfil)
+                write_perfil(perfil)
+                print(f"botão (modo do EC {esperado} -> {atual}): perfil {perfil}", flush=True)
+                notify(f"Perfil: {perfil}")
+            alvo = MODO_DO_PERFIL.get(perfil, 2)
+            if atual != alvo:
+                ec.set_modo_energia(alvo)
+            esperado = alvo
+        except OSError:
+            pass
+
+
 def button_thread(get_cfg):
     """Escuta o "TUXEDO Keyboard". Se o dispositivo sumir (driver recarregado), procura de novo."""
     while True:
@@ -456,6 +499,7 @@ def button_thread(get_cfg):
             for c in key_events(path):
                 cfg = get_cfg()
                 if cfg.get("botao_keycode") is not None and c == cfg["botao_keycode"]:
+                    ULTIMO_BOTAO[0] = time.monotonic()
                     novo = next_perfil(cfg, read_perfil(cfg))
                     write_perfil(novo)
                     print(f"botão: perfil {novo}", flush=True)
@@ -494,6 +538,7 @@ def daemon():
             processar_pedido_teclado()
             stop.wait(0.3)
     threading.Thread(target=teclado_thread, daemon=True).start()
+    threading.Thread(target=led_thread, args=(lambda: estado["cfg"], stop), daemon=True).start()
 
     aplicar_carga(cfg)
     ultima_tomada = None  # None: ainda não leu; a primeira leitura já aplica o perfil da fonte atual
@@ -533,13 +578,6 @@ def daemon():
                     print(f"{'tomada' if tomada else 'bateria'}: perfil {auto_perfil}", flush=True)
                 ultima_tomada = tomada
             perfil = read_perfil(cfg)
-            if cfg.get("led_botao"):
-                alvo_modo = MODO_DO_PERFIL.get(perfil, 2)
-                try:
-                    if ec.modo_energia() != alvo_modo:  # também cobre o reset do EC após suspender
-                        ec.set_modo_energia(alvo_modo)
-                except OSError:
-                    pass
             if temp >= cfg["temp_failsafe"]:
                 em_failsafe = True
             elif temp <= cfg["temp_failsafe"] - cfg["failsafe_saida_c"]:

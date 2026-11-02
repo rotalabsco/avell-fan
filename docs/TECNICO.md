@@ -91,6 +91,7 @@ A luz do botão segue os bits de "modo de energia" do EC em `0x0751`: `0xa0` eco
 - `sudo avell-fan led-teste [seg]` passa pelos 3 modos, mostra o `0x0751` e restaura o original.
 - No Avell C62 LIV, a luz fica **apagada** em economia, **fraca** em normal e **forte** em turbo (testado em 2026-11-02).
 - `"led_botao": true` (switch na aba Teclado): o serviço põe Silencioso → economia, Equilibrado → normal, Máximo e Automático → turbo. Também reaplica se o EC zerar os bits (suspend). Com o ciclo padrão, o botão percorre apagada → fraca → forte → forte.
+- **Com `led_botao` ligado, o firmware trata o botão sozinho** (testado em 2026-11-02): ele troca o modo de energia, e com isso a luz, e não envia mais o evento `0xB0`. Por isso uma thread lê o modo a cada 0,3 s. Uma mudança que o serviço não fez conta como toque: avança o perfil e acerta o modo para o novo perfil. Não contam como toque uma mudança logo depois de um evento de tecla (janela de 2 s, contra toque duplo) e uma mudança logo depois de voltar do suspend (`CLOCK_BOOTTIME` avança, `CLOCK_MONOTONIC` não).
 
 ## Senha (pkexec)
 
