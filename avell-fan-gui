@@ -23,7 +23,9 @@ import string
 import sys
 import time
 
-HERE = os.path.dirname(os.path.realpath(__file__))
+PROGRAMA = os.path.realpath(__file__)
+MTIME_INICIAL = os.stat(PROGRAMA).st_mtime
+HERE = os.path.dirname(PROGRAMA)
 SHARES = ("/usr/share/avell-fan", "/usr/local/share/avell-fan")  # .deb e instalar.sh
 
 
@@ -612,11 +614,16 @@ class Banner(Gtk.Box):
         self.pack_start(self.icon, False, False, 0)
         self.pack_start(self.msg, True, True, 0)
         self.pack_start(self.btn, False, False, 0)
+        self.btn_acao = cls(Gtk.Button(), "primary")
+        self.btn_acao.connect("clicked", lambda *_: self._acao and self._acao())
+        self._acao = None
+        self.pack_start(self.btn_acao, False, False, 0)
         self.pack_start(close, False, False, 0)
         self.set_no_show_all(True)
         self.kind = None
 
-    def show_msg(self, texto, kind="info", iniciar=False):
+    def show_msg(self, texto, kind="info", iniciar=False, acao=None):
+        """acao: (rótulo, função) mostra um botão extra."""
         ctx = self.get_style_context()
         for k in ("info", "warning", "error"):
             ctx.remove_class(k)
@@ -628,6 +635,10 @@ class Banner(Gtk.Box):
         for wdg in (self.icon, self.msg):
             wdg.show()
         self.btn.set_visible(iniciar)
+        self._acao = acao[1] if acao else None
+        if acao:
+            self.btn_acao.set_label(acao[0])
+        self.btn_acao.set_visible(bool(acao))
         self.get_children()[-1].show()
         self.show()
 
@@ -1366,6 +1377,7 @@ class App(Gtk.Application):
         self.status_icon = None
         self.indicator = None
         self.bandeja_inicial = "--bandeja" in sys.argv
+        self._aviso_versao = False
         self.hist_pendente = collections.deque(maxlen=HIST_S)
 
     @property
@@ -1436,7 +1448,29 @@ class App(Gtk.Application):
         elif button == 3:
             self.activate()
 
+    def versao_nova(self):
+        """O instalar.sh/.deb trocou o arquivo do programa: reabre com o código novo.
+        execv mantém o mesmo processo (e a sessão gráfica, que a janela de senha precisa)."""
+        try:
+            mudou = os.stat(PROGRAMA).st_mtime > MTIME_INICIAL + 1
+        except OSError:
+            return
+        if not mudou or self._aviso_versao:
+            return
+
+        def reabrir():
+            os.execv(sys.executable, [sys.executable, PROGRAMA]
+                     + (["--bandeja"] if not (self.janela and self.janela.get_visible()) else [])
+                     + [a for a in sys.argv[1:] if a != "--bandeja"])
+        if self.janela is None or not self.janela.get_visible():
+            reabrir()  # só na bandeja: ninguém está usando, reabre direto
+        self._aviso_versao = True
+        self.janela.banner.show_msg("Uma versão nova do Avell Fan foi instalada.", "info", acao=("Reabrir", reabrir))
+
     def atualizar(self):
+        self._ticks = getattr(self, "_ticks", 0) + 1
+        if self._ticks % 5 == 0:
+            self.versao_nova()
         s = read_status()
         if s is not None:
             amostra = (s["temp_cpu"], s["temp_gpu"], max(s["fan1_pct"], s["fan2_pct"]))
