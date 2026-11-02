@@ -16,4 +16,4 @@ Description: controle de ventoinhas, bateria e teclado para notebooks Avell (Uni
  botão de modo ao lado do power. Interface GTK3 com ícone na bandeja.
  .
  Inclui os módulos tuxedo_keyboard, uniwill_wmi e tuxedo_io do tuxedo-drivers
- (GPL-2.0), compilados via DKMS.
+ (GPL-2.0-or-later), compilados via DKMS.

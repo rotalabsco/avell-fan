@@ -801,7 +801,7 @@ class Janela(Gtk.ApplicationWindow):
         foot.pack_start(label(f'by <span font_family="{FONTE["titulo"]}" weight="600" foreground="{T["ink"]}">Rota'
                               f'<span foreground="{MARCA_LARANJA}">Labs</span></span>', markup=True), False, False, 0)
         foot.pack_start(Gtk.Box(), True, True, 0)
-        foot.pack_start(label(f"v{VERSION} · open source · GPL-2.0", "mono"), False, False, 0)
+        foot.pack_start(label(f"v{VERSION} · open source · GPL-3.0", "mono"), False, False, 0)
         outer.pack_start(foot, False, False, 0)
 
         self.carregar_curvas()

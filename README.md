@@ -1,6 +1,6 @@
 # Avell Fan: controle das ventoinhas do notebook Avell no Linux
 
-[![Release](https://img.shields.io/github/v/release/rotalabsco/avell-fan)](https://github.com/rotalabsco/avell-fan/releases/latest) [![CI](https://github.com/rotalabsco/avell-fan/actions/workflows/ci.yml/badge.svg)](https://github.com/rotalabsco/avell-fan/actions/workflows/ci.yml) [![Licença](https://img.shields.io/badge/licen%C3%A7a-GPL--2.0-blue)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/rotalabsco/avell-fan)](https://github.com/rotalabsco/avell-fan/releases/latest) [![CI](https://github.com/rotalabsco/avell-fan/actions/workflows/ci.yml/badge.svg)](https://github.com/rotalabsco/avell-fan/actions/workflows/ci.yml) [![Licença](https://img.shields.io/badge/licen%C3%A7a-GPL--3.0-blue)](LICENSE)
 
 **[Página do projeto](https://rotalabs.co/br/labs/avell-fan)** · **[Baixar o .deb](https://github.com/rotalabsco/avell-fan/releases/latest/download/avell-fan_all.deb)** · um projeto [Rota.Labs](https://rotalabs.co/br/labs)
 
@@ -144,8 +144,8 @@ O acesso ao hardware usa os módulos `tuxedo_io`, `uniwill_wmi` e `tuxedo_keyboa
 
 ## Licença e créditos
 
-- Código: [GPL-2.0](LICENSE), a mesma licença do tuxedo-drivers.
-- `vendor/tuxedo-drivers`: © TUXEDO Computers GmbH, GPL-2.0. Cópia reduzida aos 4 módulos usados; o original está em `src/Kbuild.orig`.
+- Código: [GPL-3.0-or-later](LICENSE).
+- `vendor/tuxedo-drivers`: © TUXEDO Computers GmbH, GPL-2.0-or-later ([licença própria](vendor/tuxedo-drivers/LICENSE)), compatível com a GPL-3.0. Cópia reduzida aos 4 módulos usados; o original está em `src/Kbuild.orig`.
 - Fontes Bricolage Grotesque, Geist e Geist Mono: SIL Open Font License (`fonts/OFL-*.txt`).
 - Avell é marca da sua respectiva dona. Este projeto é independente e não tem vínculo com a Avell, a Uniwill nem a TUXEDO.
 

@@ -31,7 +31,7 @@ sed "s/@VER@/$VER/g" packaging/dkms.conf.in > "$SRC/dkms.conf"
 install -d "$R/usr/share/doc/avell-fan"
 cp README.md docs/TECNICO.md docs/TEMA.md "$R/usr/share/doc/avell-fan/"
 { echo "Avell Fan $VER - https://github.com/rotalabsco/avell-fan"
-  echo "Código: GPL-2.0. vendor/tuxedo-drivers: (c) TUXEDO Computers GmbH, GPL-2.0."
+  echo "Código: GPL-3.0-or-later. vendor/tuxedo-drivers: (c) TUXEDO Computers GmbH, GPL-2.0-or-later."
   echo "Fontes Bricolage Grotesque, Geist e Geist Mono: SIL Open Font License."
   echo; cat LICENSE; } > "$R/usr/share/doc/avell-fan/copyright"
 find "$R" -name '*.orig' -o -name '__pycache__' | xargs rm -rf
