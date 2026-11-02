@@ -1,0 +1,19 @@
+Package: avell-fan
+Version: @VER@
+Architecture: all
+Maintainer: RotaLabs <contato@rotalabs.co>
+Section: utils
+Priority: optional
+Homepage: https://github.com/rotalabsco/avell-fan
+Depends: dkms, python3 (>= 3.8), python3-gi, gir1.2-gtk-3.0, libnotify-bin, pkexec | policykit-1, util-linux, kmod
+Recommends: linux-headers-generic, gir1.2-xapp-1.0 | gir1.2-ayatanaappindicator3-0.1
+Conflicts: tuxedo-drivers, tuxedo-keyboard
+Installed-Size: @SIZE@
+Description: controle de ventoinhas, bateria e teclado para notebooks Avell (Uniwill) no Linux
+ Substitui o Control Center do Windows em notebooks Avell com chassi Uniwill/Tongfang:
+ perfis e curvas das ventoinhas, failsafe a 90 °C, limite de carga da bateria,
+ perfil automático na tomada/bateria, brilho e cor do teclado RGB, Fn Lock e o
+ botão de modo ao lado do power. Interface GTK3 com ícone na bandeja.
+ .
+ Inclui os módulos tuxedo_keyboard, uniwill_wmi e tuxedo_io do tuxedo-drivers
+ (GPL-2.0), compilados via DKMS.

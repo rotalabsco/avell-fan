@@ -1,6 +1,6 @@
 # Avell Fan: controle das ventoinhas do notebook Avell no Linux
 
-Controle das ventoinhas (fans/coolers) de notebooks **Avell** no **Linux** (Ubuntu, Linux Mint e derivados). Tem perfis prontos, curva editável e ícone na bandeja. Funciona em notebooks com chassi **Uniwill / Tongfang**, onde o botão de fan e o Control Center só existem no Windows.
+Controle das ventoinhas (fans/coolers), da bateria e do teclado RGB de notebooks **Avell** no **Linux** (Ubuntu, Linux Mint e derivados). Tem perfis prontos, curva editável e ícone na bandeja. Funciona em notebooks com chassi **Uniwill / Tongfang**, onde o botão de fan e o Control Center só existem no Windows.
 
 ![Janela do Avell Fan: perfis, temperaturas, gráfico e editor de curva](docs/janela.png)
 <sub>Captura com dados de exemplo.</sub>
@@ -16,12 +16,16 @@ O Avell Fan troca o Control Center por um serviço com interface própria:
 - **temperaturas da CPU e da GPU e rotação dos dois fans**, com gráfico dos últimos 5 minutos;
 - **limite de carga da bateria** (100 %, ~90 % ou ~80 %): para quem vive na tomada, a bateria dura mais anos;
 - **troca de perfil automática** ao ligar ou tirar da tomada (ex.: silencioso na bateria);
+- **brilho e cor do teclado RGB** e **Fn Lock**, sem senha;
+- **botão de modo** (ao lado do power) alternando os perfis, como no Windows;
 - **ícone na bandeja** para trocar de perfil com um clique;
 - **comando de terminal** (`avell-fan`) para scripts.
 
 <img src="docs/bandeja.png" alt="Painel da bandeja com temperaturas e perfis" width="280">
 
-![Aba Energia: limite de carga da bateria e perfil automático na tomada e na bateria](docs/energia.png)
+| Energia | Teclado |
+|---|---|
+| ![Aba Energia: limite de carga da bateria e perfil automático na tomada e na bateria](docs/energia.png) | ![Aba Teclado: brilho, cor, Fn Lock e botão de modo](docs/teclado.png) |
 
 ## Compatibilidade
 
@@ -43,6 +47,18 @@ Se aparecer `UNIWILL Tech BIOS`, o seu notebook é Uniwill. Rode então o diagn�
 
 Requisitos: Ubuntu 22.04+ / Linux Mint 21+ (ou derivados), kernel 6.x ou 7.x e **Secure Boot desligado**. Com Secure Boot ligado, os módulos precisam ser assinados com MOK.
 
+### Pelo pacote .deb (mais fácil)
+
+Baixe o `avell-fan_<versão>_all.deb` em [Releases](https://github.com/rotalabsco/avell-fan/releases) e instale:
+
+```bash
+sudo apt install ./avell-fan_*_all.deb
+```
+
+O pacote compila os drivers (DKMS), liga o serviço e põe o **Avell Fan** no menu. Se você já tinha instalado pelo `instalar.sh`, o pacote remove a instalação antiga sozinho. Para remover: `sudo apt remove avell-fan`.
+
+### Pelo código-fonte
+
 ```bash
 git clone https://github.com/rotalabsco/avell-fan.git
 cd avell-fan
@@ -57,7 +73,9 @@ sudo ./avell-fan testar 100 10
 sudo ./instalar.sh
 ```
 
-Depois de instalar, abra **Avell Fan** no menu de aplicativos. O ícone da bandeja inicia sozinho a cada login.
+Depois de instalar, abra **Avell Fan** no menu de aplicativos. O ícone da bandeja inicia sozinho a cada login: clique esquerdo abre o painel rápido, clique direito abre a janela. Fechar a janela deixa o programa na bandeja.
+
+> Salvar curvas, energia e o botão pede a senha de administrador numa janela do sistema. Essa janela só aparece com o app aberto **pelo menu**. Aberto pelo terminal, o Linux não mostra o pedido, e a interface avisa isso.
 
 Para remover: `sudo ./desinstalar.sh`.
 
@@ -79,6 +97,7 @@ avell-fan perfil silencioso      # auto | silencioso | equilibrado | maximo
 avell-fan proximo                # alterna para o próximo perfil
 avell-fan carga                  # mostra o limite de carga da bateria
 sudo avell-fan carga stationary  # high_capacity (~100%) | balanced (~90%) | stationary (~80%)
+avell-fan teclado 4 '#ff6a00'    # brilho 0-4 e cor do teclado (sem senha)
 ```
 
 Trocar de perfil não pede senha. Salvar curvas novas pede a senha de administrador uma vez.
@@ -108,16 +127,16 @@ O acesso ao hardware usa os módulos `tuxedo_io`, `uniwill_wmi` e `tuxedo_keyboa
 ## Roadmap
 
 - [x] Limite de carga da bateria e perfil automático na tomada/bateria
-- [ ] Mapear o botão físico de fan para alternar os perfis
-- [ ] Brilho e cor do teclado RGB
-- [ ] CI compilando os drivers contra kernels novos
+- [x] Botão de modo alternando os perfis (confirmar em mais modelos)
+- [x] Brilho e cor do teclado RGB, Fn Lock
+- [x] CI compilando os drivers contra kernels novos
+- [x] Pacote `.deb`
 - [ ] Testar em outros modelos Avell
 - [x] Tema claro e temas personalizáveis ([docs/TEMA.md](docs/TEMA.md))
-- [ ] Pacote `.deb`
 
 ## English
 
-**Avell Fan** is a fan control app for **Avell laptops on Linux** (Uniwill/Tongfang chassis). It is a replacement for the Windows-only Control Center. It provides a themeable GTK3 window (JSON design tokens, dark and light themes included) and a tray panel, fan profiles (BIOS auto, silent, balanced, max), editable temperature curves, CPU/GPU temperature monitoring, a battery charge limit (100/90/80 %) and automatic profile switching on AC/battery. It also has a systemd service with a 90 °C failsafe and automatic fallback to BIOS control. Hardware access goes through the `tuxedo_io` / `uniwill_wmi` modules from [tuxedo-drivers](https://github.com/tuxedocomputers/tuxedo-drivers), built via DKMS. Tested on the Avell C62 LIV. Reports from other Uniwill-based laptops are welcome.
+**Avell Fan** is a fan control app for **Avell laptops on Linux** (Uniwill/Tongfang chassis). It is a replacement for the Windows-only Control Center. It provides a themeable GTK3 window (JSON design tokens, dark and light themes included) and a tray panel, fan profiles (BIOS auto, silent, balanced, max), editable temperature curves, CPU/GPU temperature monitoring, a battery charge limit (100/90/80 %) automatic profile switching on AC/battery, RGB keyboard brightness/color, Fn Lock and the mode button next to the power key. Install with the `.deb` from Releases. It also has a systemd service with a 90 °C failsafe and automatic fallback to BIOS control. Hardware access goes through the `tuxedo_io` / `uniwill_wmi` modules from [tuxedo-drivers](https://github.com/tuxedocomputers/tuxedo-drivers), built via DKMS. Tested on the Avell C62 LIV. Reports from other Uniwill-based laptops are welcome.
 
 ## Licença e créditos
 

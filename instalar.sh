@@ -4,33 +4,32 @@
 set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "Rode com sudo: sudo ./instalar.sh"; exit 1; }
 cd "$(dirname "$(readlink -f "$0")")"
+if dpkg -s avell-fan >/dev/null 2>&1; then
+  echo "O pacote .deb do avell-fan já está instalado. Atualize por ele (sudo apt install ./avell-fan_*.deb)"
+  echo "ou remova antes (sudo apt remove avell-fan)."
+  exit 1
+fi
 
 PKG=avell-fan-drivers
-VER=1.0
+VER=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' avell-fan)
 SRC=/usr/src/$PKG-$VER
 SHARE=/usr/local/share/avell-fan
 
 echo "==> Dependências"
-apt-get install -y --no-install-recommends dkms "linux-headers-$(uname -r)" python3-gi gir1.2-gtk-3.0 >/dev/null
+apt-get install -y --no-install-recommends dkms "linux-headers-$(uname -r)" python3-gi gir1.2-gtk-3.0 libnotify-bin >/dev/null
 apt-get install -y --no-install-recommends gir1.2-xapp-1.0 >/dev/null 2>&1 \
   || apt-get install -y --no-install-recommends gir1.2-ayatanaappindicator3-0.1 >/dev/null 2>&1 \
   || echo "   (sem biblioteca de bandeja: a interface abre só como janela)"
 
 echo "==> Drivers (DKMS: recompila sozinho a cada kernel novo)"
-dkms remove -m $PKG -v $VER --all >/dev/null 2>&1 || true
+# remove todas as versões anteriores (ex.: 1.0 ao instalar a 1.1)
+for v in $(dkms status -m $PKG 2>/dev/null | sed -n "s#^$PKG/\([^,:]*\).*#\1#p" | sort -u); do
+  dkms remove -m $PKG -v "$v" --all >/dev/null 2>&1 || true
+  rm -rf "/usr/src/$PKG-$v"
+done
 rm -rf "$SRC"
 cp -r vendor/tuxedo-drivers "$SRC"
-cat > "$SRC/dkms.conf" <<CONF
-PACKAGE_NAME="$PKG"
-PACKAGE_VERSION="$VER"
-AUTOINSTALL="yes"
-MAKE[0]="make -C \${kernel_source_dir} M=\${dkms_tree}/$PKG/$VER/build modules"
-CLEAN="make -C \${kernel_source_dir} M=\${dkms_tree}/$PKG/$VER/build clean"
-BUILT_MODULE_NAME[0]="tuxedo_compatibility_check"; BUILT_MODULE_LOCATION[0]="src/tuxedo_compatibility_check/"; DEST_MODULE_LOCATION[0]="/updates/dkms"
-BUILT_MODULE_NAME[1]="tuxedo_keyboard";            BUILT_MODULE_LOCATION[1]="src/";                             DEST_MODULE_LOCATION[1]="/updates/dkms"
-BUILT_MODULE_NAME[2]="uniwill_wmi";                BUILT_MODULE_LOCATION[2]="src/";                             DEST_MODULE_LOCATION[2]="/updates/dkms"
-BUILT_MODULE_NAME[3]="tuxedo_io";                  BUILT_MODULE_LOCATION[3]="src/tuxedo_io/";                   DEST_MODULE_LOCATION[3]="/updates/dkms"
-CONF
+sed "s/@VER@/$VER/g" packaging/dkms.conf.in > "$SRC/dkms.conf"
 dkms install -m $PKG -v $VER
 
 echo "==> Carregar no boot"

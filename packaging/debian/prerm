@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+if [ "$1" = remove ] || [ "$1" = upgrade ] || [ "$1" = deconfigure ]; then
+  systemctl stop avell-fan >/dev/null 2>&1 || true   # o ExecStopPost devolve os fans à BIOS
+fi
+if [ "$1" = remove ]; then
+  systemctl disable avell-fan >/dev/null 2>&1 || true
+  rmmod tuxedo_io uniwill_wmi tuxedo_keyboard tuxedo_compatibility_check 2>/dev/null || true
+  dkms remove -m avell-fan-drivers -v @VER@ --all >/dev/null 2>&1 || true
+fi
+exit 0

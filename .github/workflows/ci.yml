@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1" # toda segunda: pega kernels novos do runner antes dos usuários
+
+permissions:
+  contents: write
+
+jobs:
+  python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sintaxe e validação da config
+        run: |
+          for f in avell-fan avell-fan-gui; do python3 -c "import ast,sys; ast.parse(open('$f').read(), '$f')"; done
+          python3 - <<'PY'
+          import importlib.machinery, importlib.util
+          l = importlib.machinery.SourceFileLoader("core", "avell-fan")
+          m = importlib.util.module_from_spec(importlib.util.spec_from_loader("core", l)); l.exec_module(m)
+          m.validate_user_config({"carga": "stationary", "perfil_bateria": "silencioso"})
+          for ruim in ({"carga": "x"}, {"temp_failsafe": 120}, {"perfis": {"a": [[50, 80], [60, 40]]}}):
+              try:
+                  m.validate_user_config(ruim)
+                  raise SystemExit(f"deveria rejeitar {ruim}")
+              except ValueError:
+                  pass
+          assert m.validar_teclado({"brilho": 2, "cor": "#FF0000"}) == {"brilho": 2, "cor": "#ff0000"}
+          print("ok")
+          PY
+      - name: Temas válidos
+        run: |
+          for t in temas/rotalabs-*.json; do python3 -m json.tool "$t" >/dev/null; done
+          sudo apt-get update -qq && sudo apt-get install -y -qq python3-gi gir1.2-gtk-3.0 xvfb >/dev/null
+          xvfb-run -a python3 - <<'PY'
+          import importlib.machinery, importlib.util, sys
+          sys.argv = ["avell-fan-gui", "--tema", "rotalabs-claro"]
+          l = importlib.machinery.SourceFileLoader("gui", "avell-fan-gui")
+          g = importlib.util.module_from_spec(importlib.util.spec_from_loader("gui", l)); l.exec_module(g)
+          assert g.TEMA["esquema"] == "claro", g.TEMA
+          print("ok")
+          PY
+
+  drivers:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Headers do kernel
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq "linux-headers-$(uname -r)" build-essential >/dev/null
+      - name: Compilar os 4 módulos (igual ao DKMS)
+        run: |
+          B=$(mktemp -d)
+          cp -r vendor/tuxedo-drivers/. "$B/"
+          make -C "/lib/modules/$(uname -r)/build" M="$B" modules
+          ls "$B"/src/*.ko "$B"/src/*/*.ko
+
+  deb:
+    runs-on: ubuntu-24.04
+    needs: [python, drivers]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Gerar o .deb
+        run: ./packaging/build-deb.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: avell-fan-deb
+          path: dist/*.deb
+      - name: Publicar no release (tags v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --generate-notes --title "Avell Fan ${GITHUB_REF_NAME#v}"
+          gh release upload "$GITHUB_REF_NAME" dist/*.deb --clobber

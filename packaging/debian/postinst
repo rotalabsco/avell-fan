@@ -1,0 +1,22 @@
+#!/bin/sh
+set -e
+if [ "$1" = configure ]; then
+  [ -f /etc/avell-fan.json ] || echo '{}' > /etc/avell-fan.json
+  if ! dkms status -m avell-fan-drivers -v @VER@ 2>/dev/null | grep -q installed; then
+    dkms add -m avell-fan-drivers -v @VER@ >/dev/null 2>&1 || true
+    if ! dkms install -m avell-fan-drivers -v @VER@; then
+      echo "avell-fan: falha ao compilar os drivers. Instale os headers do kernel" >&2
+      echo "  (sudo apt install linux-headers-\$(uname -r)) e rode: sudo dpkg-reconfigure avell-fan" >&2
+    fi
+  fi
+  rmmod tuxedo_io uniwill_wmi tuxedo_keyboard tuxedo_compatibility_check 2>/dev/null || true
+  modprobe tuxedo_keyboard 2>/dev/null && modprobe uniwill_wmi 2>/dev/null && modprobe tuxedo_io 2>/dev/null || \
+    echo "avell-fan: não consegui carregar os drivers agora (Secure Boot ligado?). Veja o README." >&2
+  systemctl daemon-reload || true
+  systemctl enable avell-fan >/dev/null 2>&1 || true
+  systemctl restart avell-fan || true
+  gtk-update-icon-cache -q /usr/share/icons/hicolor 2>/dev/null || true
+  update-desktop-database -q /usr/share/applications 2>/dev/null || true
+  echo "avell-fan: pronto. Abra \"Avell Fan\" no menu de aplicativos."
+fi
+exit 0

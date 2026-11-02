@@ -20,16 +20,15 @@ import json
 import os
 import re
 import string
-import subprocess
 import sys
 import time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
-SHARE = "/usr/local/share/avell-fan"
+SHARES = ("/usr/share/avell-fan", "/usr/local/share/avell-fan")  # .deb e instalar.sh
 
 
 def _asset(*parts):
-    for base in (HERE, SHARE):
+    for base in (HERE,) + SHARES:
         p = os.path.join(base, *parts)
         if os.path.exists(p):
             return p
@@ -55,7 +54,7 @@ import gi  # noqa: E402
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import Gdk, GdkPixbuf, GLib, Gtk  # noqa: E402
+from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk  # noqa: E402
 
 try:
     gi.require_version("XApp", "1.0")
@@ -70,7 +69,7 @@ except (ValueError, ImportError):
 
 
 def _load_core():
-    for path in (os.path.join(HERE, "avell-fan"), "/usr/local/bin/avell-fan"):
+    for path in (os.path.join(HERE, "avell-fan"), "/usr/bin/avell-fan", "/usr/local/bin/avell-fan"):
         if os.path.exists(path):
             loader = importlib.machinery.SourceFileLoader("avell_fan_core", path)
             mod = importlib.util.module_from_spec(importlib.util.spec_from_loader("avell_fan_core", loader))
@@ -81,12 +80,14 @@ def _load_core():
 
 core, CORE_BIN = _load_core()
 ICON = _asset("avell-fan.svg") or "sensors-fan-symbolic"
-VERSION = "1.0"
+VERSION = getattr(core, "VERSION", "1.0")
 
 PERFIS_UI = [("auto", "Automático", "BIOS decide"), ("silencioso", "Silencioso", "Mínimo de ruído"),
              ("equilibrado", "Equilibrado", "Dia a dia"), ("maximo", "Máximo", "100% sempre")]
 NOME = {p[0]: p[1] for p in PERFIS_UI}
 EDITAVEIS = ["silencioso", "equilibrado"]
+CORES_TECLADO = [("#ffffff", "Branco"), ("#ff6a00", "Laranja"), ("#ff0000", "Vermelho"), ("#ff0080", "Rosa"),
+                 ("#8000ff", "Roxo"), ("#0040ff", "Azul"), ("#00ffff", "Ciano"), ("#00ff40", "Verde")]
 CARGAS_UI = [("high_capacity", "Completa", "até 100%"), ("balanced", "Equilibrada", "até ~90%"),
              ("stationary", "Estacionária", "até ~80%")]
 HIST_S = 300
@@ -224,6 +225,16 @@ combobox button { background: @sunken; background-image: none; border: 1px solid
 combobox button:hover { background: @hover; }
 combobox menu, combobox window menu { background: @raised; color: @ink; }
 .energia-linha { min-height: 36px; }
+button.swatch { min-width: 32px; min-height: 32px; padding: 0; border-radius: 9999px; border: 2px solid @line_strong;
+  background-image: none; box-shadow: none; }
+button.swatch:checked { border: 3px solid @ink; box-shadow: 0 0 0 2px @orange; }
+switch { background: @hover; background-image: none; border: 1px solid @line_strong; border-radius: 9999px;
+  min-width: 44px; min-height: 24px; color: transparent; }
+switch:checked { background: @orange; border-color: @orange; }
+switch slider { background: @ink; background-image: none; border: none; border-radius: 9999px; min-width: 20px;
+  min-height: 20px; box-shadow: none; margin: 1px; }
+switch:checked slider { background: @on_accent; }
+colorbutton button, button.color { min-height: 32px; border-radius: ${r_md}px; }
 .banner { border-radius: ${r_md}px; padding: 10px 14px; }
 .banner.warning { background: @warning_soft; border: 1px solid @warning_line; }
 .banner.error { background: @danger_soft; border: 1px solid @danger_line; }
@@ -312,6 +323,54 @@ def read_status():
         return s
     except (OSError, ValueError):
         return None
+
+
+def executar_root(args, entrada, ao_terminar):
+    """pkexec sem travar a janela. ao_terminar(ok, msg) roda no loop do GTK.
+
+    --disable-internal-agent: sem a janela de senha do desktop, o pkexec falha na hora
+    em vez de esperar a senha num terminal (o que congelava a interface)."""
+    flags = Gio.SubprocessFlags.STDIN_PIPE | Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE
+    try:
+        proc = Gio.Subprocess.new(["pkexec", "--disable-internal-agent"] + args, flags)
+    except GLib.Error as e:
+        return ao_terminar(False, f"Não consegui rodar o pkexec: {e.message}")
+
+    def fim(p, res):
+        try:
+            _ok, out, err = p.communicate_utf8_finish(res)
+        except GLib.Error as e:
+            return ao_terminar(False, e.message)
+        rc = p.get_exit_status()
+        texto = ((err or "") + (out or "")).strip()
+        if rc == 0:
+            ao_terminar(True, texto)
+        elif "authentication agent" in texto.lower():
+            ao_terminar(False, "Sem janela de senha: abra o Avell Fan pelo menu de aplicativos (aberto pelo "
+                               "terminal, o Linux não mostra o pedido de senha).")
+        elif rc in (126, 127):
+            ao_terminar(False, "Cancelado: a senha não foi confirmada.")
+        else:
+            ao_terminar(False, f"Erro: {texto or rc}")
+    proc.communicate_utf8_async(entrada, None, fim)
+
+
+def pedir_teclado(pedido):
+    try:
+        # junta com um pedido que o serviço ainda não leu (cliques rápidos)
+        try:
+            with open(core.TECLADO_PEDIDO) as f:
+                pendente = json.loads(f.read(4096) or "{}")
+        except (OSError, ValueError):
+            pendente = {}
+        if isinstance(pendente, dict):
+            pendente.update(pedido)
+            pedido = pendente
+        with open(core.TECLADO_PEDIDO, "w") as f:
+            json.dump(pedido, f)
+        return None
+    except OSError:
+        return "Não consegui mudar o teclado. O serviço avell-fan está rodando?"
 
 
 def set_perfil(nome):
@@ -545,7 +604,9 @@ class Banner(Gtk.Box):
         self.msg = label("")
         self.msg.set_line_wrap(True)
         self.btn = cls(Gtk.Button(label="Iniciar serviço"), "secondary")
-        self.btn.connect("clicked", lambda *_: subprocess.Popen(["pkexec", "systemctl", "start", "avell-fan"]))
+        self.btn.connect("clicked", lambda *_: executar_root(
+            ["systemctl", "start", "avell-fan"], None,
+            lambda ok, msg: None if ok else self.show_msg(msg, "warning", iniciar=True)))
         close = cls(Gtk.Button(label="✕"), "ghost")
         close.connect("clicked", lambda *_: self.hide())
         self.pack_start(self.icon, False, False, 0)
@@ -611,7 +672,7 @@ class Janela(Gtk.ApplicationWindow):
         abas.set_valign(Gtk.Align.CENTER)
         self.secoes = {}
         g = None
-        for nome, titulo in (("ventoinhas", "Ventoinhas"), ("energia", "Energia")):
+        for nome, titulo in (("ventoinhas", "Ventoinhas"), ("energia", "Energia"), ("teclado", "Teclado")):
             tb = Gtk.RadioButton.new_with_label_from_widget(g, titulo)
             tb.set_mode(False)
             tb.connect("toggled", lambda b, n=nome: b.get_active() and self.stack.set_visible_child_name(n))
@@ -620,6 +681,7 @@ class Janela(Gtk.ApplicationWindow):
             self.secoes[nome] = tb
         hb.set_custom_title(abas)
         self.set_titlebar(hb)
+        self.set_title("Avell Fan")
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.add(outer)
@@ -639,6 +701,8 @@ class Janela(Gtk.ApplicationWindow):
         self.stack.add_named(fans, "ventoinhas")
         pag_energia = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
         self.stack.add_named(pag_energia, "energia")
+        pag_teclado = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
+        self.stack.add_named(pag_teclado, "teclado")
         root = fans  # as seções abaixo vão para a aba Ventoinhas
 
         # perfis
@@ -717,6 +781,8 @@ class Janela(Gtk.ApplicationWindow):
         cur.pack_start(bt, False, False, 0)
         root.pack_start(cur, True, True, 0)
         pag_energia.pack_start(self.criar_energia(), False, False, 0)
+        pag_teclado.pack_start(self.criar_teclado(), False, False, 0)
+        pag_teclado.pack_start(self.criar_botao(), False, False, 0)
 
         # rodapé
         foot = cls(Gtk.Box(spacing=8), "footer")
@@ -785,17 +851,18 @@ class Janela(Gtk.ApplicationWindow):
             core.validate_user_config(user)
         except ValueError as e:
             return self.banner.show_msg(str(e), "error")
-        r = subprocess.run(["pkexec", CORE_BIN, "aplicar-config"], input=json.dumps(user),
-                           capture_output=True, text=True)
-        if r.returncode == 0:
-            self.carregar_curvas()
-            self.editor.set_pontos(self.curvas_edit[self.aba()])
+        self.b_salvar.set_sensitive(False)
+        self.lbl_alter.set_markup("<i>Aguardando a senha…</i>")
+
+        def fim(ok, msg):
+            if ok:
+                self.carregar_curvas()
+                self.editor.set_pontos(self.curvas_edit[self.aba()])
+                self.banner.show_msg("Curvas salvas. O serviço já está usando.", "info")
+            else:
+                self.banner.show_msg(msg, "warning")
             self.atualizar_botoes()
-            self.banner.show_msg("Curvas salvas. O serviço já está usando.", "info")
-        elif r.returncode in (126, 127):
-            self.banner.show_msg("Salvamento cancelado: a senha não foi confirmada.", "warning")
-        else:
-            self.banner.show_msg(f"Erro ao salvar: {(r.stderr or r.stdout).strip()}", "error")
+        executar_root([CORE_BIN, "aplicar-config"], json.dumps(user), fim)
 
     # ---------------------------------------------------------------- energia
     def criar_energia(self):
@@ -909,15 +976,17 @@ class Janela(Gtk.ApplicationWindow):
             core.validate_user_config(user)
         except ValueError as e:
             return self.banner.show_msg(str(e), "error")
-        r = subprocess.run(["pkexec", CORE_BIN, "aplicar-config"], input=json.dumps(user),
-                           capture_output=True, text=True)
-        if r.returncode == 0:
-            self.carregar_energia()
-            self.banner.show_msg("Energia salva. O limite de carga já vale.", "info")
-        elif r.returncode in (126, 127):
-            self.banner.show_msg("Salvamento cancelado: a senha não foi confirmada.", "warning")
-        else:
-            self.banner.show_msg(f"Erro ao salvar: {(r.stderr or r.stdout).strip()}", "error")
+        self.b_energia_salvar.set_sensitive(False)
+        self.lbl_energia_alter.set_markup("<i>Aguardando a senha…</i>")
+
+        def fim(ok, msg):
+            if ok:
+                self.carregar_energia()
+                self.banner.show_msg("Energia salva. O limite de carga já vale.", "info")
+            else:
+                self.banner.show_msg(msg, "warning")
+                self.atualizar_energia_botoes()
+        executar_root([CORE_BIN, "aplicar-config"], json.dumps(user), fim)
 
     def mostrar_energia(self):
         tomada, bat, estado = core.energia()
@@ -931,6 +1000,165 @@ class Janela(Gtk.ApplicationWindow):
             partes.append(f"bateria {bat}%" + (f" · {est}" if est else ""))
         self.lbl_energia.set_markup(" · ".join(partes))
 
+    # ---------------------------------------------------------------- teclado
+    def criar_teclado(self):
+        e = core.teclado_estado()
+        self.tecl_mexido = 0.0
+        card = cls(Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14), "card")
+        top = Gtk.Box(spacing=12)
+        top.pack_start(label("Teclado", "h3"), False, False, 0)
+        top.pack_start(Gtk.Box(), True, True, 0)
+        top.pack_start(label("Muda na hora, sem senha · as teclas Fn de brilho continuam funcionando", "muted"),
+                       False, False, 0)
+        card.pack_start(top, False, False, 0)
+        if e["brilho"] is None:
+            card.pack_start(label("O driver não expõe a luz do teclado neste notebook.", "muted"), False, False, 0)
+            self.brilhos = {}
+            self.sw_fn = None
+            return card
+
+        card.pack_start(label("BRILHO", "overline"), False, False, 0)
+        seg = cls(Gtk.Box(spacing=4, homogeneous=True), "segmented")
+        self.brilhos = {}
+        g = None
+        for n in range(0, (e["max"] or 4) + 1):
+            rb = Gtk.RadioButton.new_from_widget(g)
+            rb.set_mode(False)
+            rb.add(label("Desligado" if n == 0 else f"{n}", "seg-title", xalign=0.5))
+            rb.connect("toggled", self.on_brilho, n)
+            g = g or rb
+            seg.pack_start(rb, True, True, 0)
+            self.brilhos[n] = rb
+        card.pack_start(seg, False, False, 0)
+
+        card.pack_start(label("COR", "overline"), False, False, 0)
+        cores = Gtk.Box(spacing=10)
+        self.swatches = {}
+        for hexcor, nome in CORES_TECLADO:
+            b = cls(Gtk.ToggleButton(), "swatch")
+            b.set_tooltip_text(nome)
+            prov = Gtk.CssProvider()
+            prov.load_from_data(f"button.swatch {{ background: {hexcor}; }}".encode())
+            b.get_style_context().add_provider(prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
+            b.connect("toggled", self.on_swatch, hexcor)
+            cores.pack_start(b, False, False, 0)
+            self.swatches[hexcor] = b
+        self.cor_custom = cls(Gtk.ColorButton(), "secondary")
+        self.cor_custom.set_title("Cor do teclado")
+        self.cor_custom.connect("color-set", self.on_cor_custom)
+        cores.pack_start(self.cor_custom, False, False, 0)
+        cores.pack_start(label("Outra cor", "muted"), False, False, 0)
+        card.pack_start(cores, False, False, 0)
+
+        if e["fn_lock"] is not None:
+            fl = Gtk.Box(spacing=12)
+            txt = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            txt.pack_start(label("Fn Lock", "seg-title"), False, False, 0)
+            txt.pack_start(label("F1–F12 funcionam como teclas de função sem segurar o Fn", "muted"), False, False, 0)
+            fl.pack_start(txt, True, True, 0)
+            self.sw_fn = Gtk.Switch(valign=Gtk.Align.CENTER)
+            self.sw_fn.connect("notify::active", self.on_fn_lock)
+            fl.pack_start(self.sw_fn, False, False, 0)
+            card.pack_start(fl, False, False, 0)
+        else:
+            self.sw_fn = None
+        self.mostrar_teclado(forcar=True)
+        return card
+
+    def criar_botao(self):
+        card = cls(Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10), "card")
+        linha = Gtk.Box(spacing=12)
+        txt = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        txt.pack_start(label("Botão de modo do notebook", "h3"), False, False, 0)
+        ciclo = " → ".join(NOME.get(p, p) for p in core.load_config()["ciclo"])
+        d = label(f"O botão ao lado do power alterna os perfis: {ciclo}. Aparece uma notificação a cada troca.",
+                  "muted")
+        d.set_line_wrap(True)
+        txt.pack_start(d, False, False, 0)
+        linha.pack_start(txt, True, True, 0)
+        self.sw_botao = Gtk.Switch(valign=Gtk.Align.CENTER)
+        self.sw_botao.set_active(core.load_config().get("botao_keycode") is not None)
+        self.sw_botao.connect("state-set", self.on_botao)
+        linha.pack_start(self.sw_botao, False, False, 0)
+        card.pack_start(linha, False, False, 0)
+        return card
+
+    def on_botao(self, sw, ligado):
+        user = user_config()
+        if ligado:
+            user.pop("botao_keycode", None)  # volta ao padrão (KEY_F6 do "TUXEDO Keyboard")
+        else:
+            user["botao_keycode"] = None
+
+        def fim(ok, msg):
+            if ok:
+                sw.set_state(ligado)
+                self.banner.show_msg("Botão " + ("ativado." if ligado else "desativado."), "info")
+            else:
+                sw.set_active(not ligado)
+                sw.set_state(not ligado)
+                self.banner.show_msg(msg, "warning")
+        executar_root([CORE_BIN, "aplicar-config"], json.dumps(user), fim)
+        return True  # o estado só muda depois da senha
+
+    def _pedir(self, pedido):
+        if self._sync:
+            return
+        self.tecl_mexido = time.monotonic()
+        erro = pedir_teclado(pedido)
+        if erro:
+            self.banner.show_msg(erro, "error")
+
+    def on_brilho(self, rb, n):
+        if rb.get_active():
+            self._pedir({"brilho": n})
+
+    def on_swatch(self, b, hexcor):
+        if self._sync:
+            return
+        if b.get_active():
+            self._sync = True
+            for h, o in self.swatches.items():
+                o.set_active(h == hexcor)
+            self._sync = False
+            pedido = {"cor": hexcor}
+            if self.brilhos and self.brilhos[0].get_active():
+                pedido["brilho"] = max(self.brilhos)  # escolher cor com a luz apagada acende
+            self._pedir(pedido)
+        elif not any(o.get_active() for o in self.swatches.values()):
+            self._sync = True
+            b.set_active(True)  # sempre um selecionado
+            self._sync = False
+
+    def on_cor_custom(self, cb):
+        c = cb.get_rgba()
+        hexcor = "#%02x%02x%02x" % (round(c.red * 255), round(c.green * 255), round(c.blue * 255))
+        self._sync = True
+        for o in self.swatches.values():
+            o.set_active(False)
+        self._sync = False
+        self._pedir({"cor": hexcor})
+
+    def on_fn_lock(self, sw, _p):
+        self._pedir({"fn_lock": sw.get_active()})
+
+    def mostrar_teclado(self, forcar=False):
+        if not self.brilhos or (not forcar and time.monotonic() - self.tecl_mexido < 4):
+            return  # dá tempo ao serviço de aplicar o pedido antes de reler
+        e = core.teclado_estado()
+        self._sync = True
+        if e["brilho"] in self.brilhos:
+            self.brilhos[e["brilho"]].set_active(True)
+        if e["cor"]:
+            for h, o in self.swatches.items():
+                o.set_active(h == e["cor"])
+            rgba = Gdk.RGBA()
+            rgba.parse(e["cor"])
+            self.cor_custom.set_rgba(rgba)
+        if self.sw_fn is not None and e["fn_lock"] is not None:
+            self.sw_fn.set_active(e["fn_lock"])
+        self._sync = False
+
     # ---------------------------------------------------------------- status
     def on_perfil_toggled(self, rb, nome):
         if rb.get_active() and not self._sync:
@@ -941,6 +1169,7 @@ class Janela(Gtk.ApplicationWindow):
 
     def atualizar(self, s):
         self.mostrar_energia()
+        self.mostrar_teclado()
         if s is None:
             self.pill.set_markup(f'<span foreground="{T["warning"]}">●</span>  Serviço parado')
             if self.banner.kind != "parado" or not self.banner.get_visible():
@@ -970,6 +1199,16 @@ class Janela(Gtk.ApplicationWindow):
     def on_close(self, *_):
         if self.app.tem_bandeja:
             self.hide()  # continua na bandeja
+            aviso = os.path.expanduser("~/.config/avell-fan/bandeja-avisado")
+            if not os.path.exists(aviso):
+                n = Gio.Notification.new("Avell Fan continua na bandeja")
+                n.set_body("O controle dos fans segue ativo. Clique no ícone da bandeja para abrir de novo.")
+                self.app.send_notification("bandeja", n)
+                try:
+                    os.makedirs(os.path.dirname(aviso), exist_ok=True)
+                    open(aviso, "w").close()
+                except OSError:
+                    pass
             return True
         return False
 
@@ -1126,8 +1365,8 @@ class App(Gtk.Application):
             self.painel = PainelBandeja(self)
             si = XApp.StatusIcon()
             si.set_name("avell-fan")
-            tema = "/usr/local/share/icons/hicolor/scalable/apps/avell-fan.svg"
-            si.set_icon_name("avell-fan" if os.path.exists(tema) else ICON)
+            no_tema = Gtk.IconTheme.get_default().has_icon("avell-fan")
+            si.set_icon_name("avell-fan" if no_tema else ICON)
             si.set_tooltip_text("Avell Fan")
             si.connect("button-release-event", self.on_tray_click)
             si.set_visible(True)
@@ -1179,5 +1418,6 @@ class App(Gtk.Application):
 
 
 if __name__ == "__main__":
+    GLib.set_application_name("Avell Fan")
     app = App()
     sys.exit(app.run([a for a in sys.argv if a != "--bandeja"]))

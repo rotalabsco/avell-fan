@@ -8,6 +8,8 @@ rm -f /etc/systemd/system/avell-fan.service /usr/local/bin/avell-fan /usr/local/
 rm -rf /usr/local/share/avell-fan /var/lib/avell-fan
 systemctl daemon-reload
 rmmod tuxedo_io uniwill_wmi tuxedo_keyboard tuxedo_compatibility_check 2>/dev/null
-dkms remove -m avell-fan-drivers -v 1.0 --all 2>/dev/null
-rm -rf /usr/src/avell-fan-drivers-1.0
+for v in $(dkms status -m avell-fan-drivers 2>/dev/null | sed -n 's#^avell-fan-drivers/\([^,:]*\).*#\1#p' | sort -u); do
+  dkms remove -m avell-fan-drivers -v "$v" --all 2>/dev/null
+  rm -rf "/usr/src/avell-fan-drivers-$v"
+done
 echo "Removido (o /etc/avell-fan.json foi mantido)."

@@ -10,6 +10,8 @@ Comandos:
   avell-fan testar <pct> [seg]  força os dois fans em <pct>% por alguns segundos e volta pro auto (root)
   avell-fan carga [modo]        mostra ou define o limite de carga da bateria (definir: root)
                                 high_capacity (~100%), balanced (~90%), stationary (~80%)
+  avell-fan teclado [brilho] [#cor]  mostra ou muda o brilho (0-4) e a cor do teclado (via serviço)
+  avell-fan versao              mostra a versão
   avell-fan botao               mostra as teclas recebidas pelo "TUXEDO Keyboard" (root) para achar o botão de fan
 """
 import array
@@ -26,6 +28,7 @@ import threading
 import time
 
 # ---------------------------------------------------------------- ioctl (conferido contra tuxedo_io_ioctl.h)
+VERSION = "1.1"
 DEV = "/dev/tuxedo_io"
 _R, _W = 0xEC + 3, 0xEC + 4
 def _ior(nr): return (2 << 30) | (8 << 16) | (_R << 8) | nr
@@ -44,6 +47,10 @@ PERSIST_FILE = "/var/lib/avell-fan/perfil"
 CONFIG_FILE = "/etc/avell-fan.json"
 CARGA_DIR = "/sys/devices/platform/tuxedo_keyboard/charging_profile"
 POWER_DIR = "/sys/class/power_supply"
+LED_DIR = "/sys/class/leds/rgb:kbd_backlight"
+FN_LOCK_FILE = "/sys/devices/platform/tuxedo_keyboard/fn_lock"
+TECLADO_PEDIDO = f"{RUN_DIR}/teclado"             # usuário escreve (0666), o serviço aplica
+TECLADO_SALVO = "/var/lib/avell-fan/teclado.json"  # reaplicado a cada boot
 # perfis de carga do EC Uniwill (tuxedo_keyboard): limite aproximado da bateria
 CARGAS = {"high_capacity": 100, "balanced": 90, "stationary": 80}
 
@@ -65,7 +72,9 @@ DEFAULT_CONFIG = {
     "histerese_c": 3,             # só reduz se a temperatura cair X °C abaixo do ponto que subiu
     "pct_minimo": 25,             # nunca manda menos que isso no modo manual (fan parado = risco)
     "reaplicar_s": 30,            # regrava a velocidade periodicamente (EC pode resetar após suspend)
-    "botao_keycode": None,        # preencher depois de descobrir com "avell-fan botao"
+    # Tecla de modo ao lado do power (evento WMI 0xB0): o driver a converte em Meta+Alt+F6 no
+    # dispositivo "TUXEDO Keyboard". Só esse dispositivo é lido, então um F6 comum não conta.
+    "botao_keycode": 64,          # KEY_F6; null desliga. Para conferir: sudo avell-fan botao
     "carga": None,                # limite da bateria: high_capacity (100%) | balanced (90%) | stationary (80%); None = não mexe
     "perfil_tomada": None,        # perfil aplicado ao ligar na tomada; None = não troca
     "perfil_bateria": None,       # perfil aplicado ao tirar da tomada; None = não troca
@@ -99,6 +108,9 @@ def validate_user_config(user):
     pm = user.get("pct_minimo", 25)
     if not isinstance(pm, (int, float)) or not 15 <= pm <= 100:
         raise ValueError("pct_minimo deve ficar entre 15 e 100")
+    bk = user.get("botao_keycode", 64)
+    if bk is not None and (not isinstance(bk, int) or not 1 <= bk <= 767):
+        raise ValueError("botao_keycode deve ser um código de tecla (1-767) ou null")
     carga = user.get("carga")
     if carga is not None and carga not in CARGAS:
         raise ValueError(f"carga deve ser {', '.join(CARGAS)} ou null")
@@ -225,6 +237,106 @@ def energia():
     return tomada, bat, estado
 
 
+# ---------------------------------------------------------------- teclado (LED RGB e Fn lock)
+def _ler(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def teclado_estado():
+    """{"brilho", "max", "cor", "fn_lock"}; None nos campos que o driver não expõe."""
+    b, mx, rgb, fl = (_ler(f"{LED_DIR}/brightness"), _ler(f"{LED_DIR}/max_brightness"),
+                      _ler(f"{LED_DIR}/multi_intensity"), _ler(FN_LOCK_FILE))
+    cor = None
+    if rgb and len(rgb.split()) == 3:
+        cor = "#" + "".join(f"{min(255, int(v)):02x}" for v in rgb.split())
+    return {"brilho": int(b) if b and b.isdigit() else None, "max": int(mx) if mx and mx.isdigit() else None,
+            "cor": cor, "fn_lock": None if fl is None else fl == "1"}
+
+
+def validar_teclado(t):
+    if not isinstance(t, dict):
+        raise ValueError("pedido do teclado deve ser um objeto JSON")
+    out = {}
+    if "brilho" in t:
+        if not isinstance(t["brilho"], int) or not 0 <= t["brilho"] <= 10:
+            raise ValueError("brilho deve ser um inteiro de 0 a 10")
+        out["brilho"] = t["brilho"]
+    if "cor" in t:
+        c = t["cor"]
+        if not isinstance(c, str) or len(c) != 7 or c[0] != "#" or any(x not in "0123456789abcdefABCDEF" for x in c[1:]):
+            raise ValueError("cor deve ser #rrggbb")
+        out["cor"] = c.lower()
+    if "fn_lock" in t:
+        if not isinstance(t["fn_lock"], bool):
+            raise ValueError("fn_lock deve ser true ou false")
+        out["fn_lock"] = t["fn_lock"]
+    return out
+
+
+def aplicar_teclado(t):
+    """Grava no sysfs (root). Ignora o que o driver não expõe."""
+    def w(path, v):
+        try:
+            with open(path, "w") as f:
+                f.write(v)
+        except OSError as e:
+            print(f"teclado: não consegui gravar {path}: {e}", file=sys.stderr, flush=True)
+    if "cor" in t and os.path.exists(f"{LED_DIR}/multi_intensity"):
+        c = t["cor"]
+        w(f"{LED_DIR}/multi_intensity", f"{int(c[1:3], 16)} {int(c[3:5], 16)} {int(c[5:7], 16)}")
+    if "brilho" in t and os.path.exists(f"{LED_DIR}/brightness"):
+        mx = teclado_estado()["max"] or 4
+        w(f"{LED_DIR}/brightness", str(min(t["brilho"], mx)))
+    if "fn_lock" in t and os.path.exists(FN_LOCK_FILE):
+        w(FN_LOCK_FILE, "1" if t["fn_lock"] else "0")
+
+
+def processar_pedido_teclado():
+    """Aplica /run/avell-fan/teclado (escrito pela interface) e guarda para o próximo boot."""
+    try:
+        with open(TECLADO_PEDIDO) as f:
+            txt = f.read(4096).strip()  # arquivo aberto a todos: lê no máximo 4 KB
+    except OSError:
+        return
+    if not txt:
+        return
+    try:
+        t = validar_teclado(json.loads(txt))
+    except ValueError as e:
+        print(f"pedido do teclado ignorado: {e}", file=sys.stderr, flush=True)
+        t = None
+    with open(TECLADO_PEDIDO, "w"):
+        pass  # esvazia: pedido consumido
+    if not t:
+        return
+    aplicar_teclado(t)
+    salvo = {}
+    try:
+        with open(TECLADO_SALVO) as f:
+            salvo = validar_teclado(json.load(f))
+    except (OSError, ValueError):
+        pass
+    salvo.update(t)
+    try:
+        os.makedirs(os.path.dirname(TECLADO_SALVO), exist_ok=True)
+        with open(TECLADO_SALVO, "w") as f:
+            json.dump(salvo, f)
+    except OSError:
+        pass
+
+
+def restaurar_teclado():
+    try:
+        with open(TECLADO_SALVO) as f:
+            aplicar_teclado(validar_teclado(json.load(f)))
+    except (OSError, ValueError):
+        pass
+
+
 # ---------------------------------------------------------------- estado compartilhado
 def read_perfil(cfg):
     for path in (PERFIL_FILE, PERSIST_FILE):
@@ -273,7 +385,7 @@ def notify(msg):
         try:
             subprocess.Popen(
                 ["setpriv", f"--reuid={uid}", f"--regid={uid}", "--init-groups",
-                 "notify-send", "-a", "avell-fan", "-t", "1500", "Fan", msg],
+                 "notify-send", "-a", "Avell Fan", "-i", "avell-fan", "-t", "2000", "Avell Fan", msg],
                 env={"DBUS_SESSION_BUS_ADDRESS": f"unix:path={bus}", "PATH": "/usr/bin:/bin"},
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except OSError:
@@ -313,16 +425,23 @@ def next_perfil(cfg, atual):
     return ciclo[(ciclo.index(atual) + 1) % len(ciclo)] if atual in ciclo else ciclo[0]
 
 
-def button_thread(cfg):
-    code = cfg.get("botao_keycode")
-    path = find_tuxedo_input()
-    if code is None or path is None:
-        return
-    for c in key_events(path):
-        if c == code:
-            novo = next_perfil(cfg, read_perfil(cfg))
-            write_perfil(novo)
-            notify(f"Perfil: {novo}")
+def button_thread(get_cfg):
+    """Escuta o "TUXEDO Keyboard". Se o dispositivo sumir (driver recarregado), procura de novo."""
+    while True:
+        path = find_tuxedo_input()
+        if path is None:
+            time.sleep(10)
+            continue
+        try:
+            for c in key_events(path):
+                cfg = get_cfg()
+                if cfg.get("botao_keycode") is not None and c == cfg["botao_keycode"]:
+                    novo = next_perfil(cfg, read_perfil(cfg))
+                    write_perfil(novo)
+                    print(f"botão: perfil {novo}", flush=True)
+                    notify(f"Perfil: {novo}")
+        except OSError:
+            time.sleep(5)
 
 
 # ---------------------------------------------------------------- daemon
@@ -342,7 +461,19 @@ def daemon():
     signal.signal(signal.SIGTERM, bye)
     signal.signal(signal.SIGINT, bye)
 
-    threading.Thread(target=button_thread, args=(cfg,), daemon=True).start()
+    estado = {"cfg": cfg}
+    threading.Thread(target=button_thread, args=(lambda: estado["cfg"],), daemon=True).start()
+    # pedidos do teclado: a interface escreve sem senha, o serviço valida e aplica
+    with open(TECLADO_PEDIDO, "a"):
+        pass
+    os.chmod(TECLADO_PEDIDO, 0o666)
+    restaurar_teclado()
+
+    def teclado_thread():
+        while not stop.is_set():
+            processar_pedido_teclado()
+            stop.wait(0.3)
+    threading.Thread(target=teclado_thread, daemon=True).start()
 
     aplicar_carga(cfg)
     ultima_tomada = None  # None: ainda não leu; a primeira leitura já aplica o perfil da fonte atual
@@ -370,6 +501,7 @@ def daemon():
             if config_mtime() != cfg_mtime:  # GUI salvou novas curvas
                 cfg_mtime = config_mtime()
                 cfg = load_config()
+                estado["cfg"] = cfg
                 atual_pct = None
                 aplicar_carga(cfg)
                 print("config recarregada", flush=True)
@@ -529,6 +661,30 @@ def main():
         os.replace(tmp, CONFIG_FILE)
         aplicar_carga(load_config())  # aplica já, mesmo sem o serviço
         print(f"carga: {args[1]} (até ~{CARGAS[args[1]]}%), salvo em {CONFIG_FILE}")
+    elif cmd == "versao":
+        print(VERSION)
+    elif cmd == "teclado":
+        e = teclado_estado()
+        if len(args) < 2:
+            if e["brilho"] is None:
+                sys.exit("o driver não expõe o LED do teclado neste notebook")
+            print(f"brilho: {e['brilho']}/{e['max']}  cor: {e['cor']}  fn_lock: {'ligado' if e['fn_lock'] else 'desligado'}")
+            return
+        pedido = {}
+        for a in args[1:]:
+            if a.startswith("#"):
+                pedido["cor"] = a
+            elif a.isdigit():
+                pedido["brilho"] = int(a)
+            else:
+                sys.exit("uso: avell-fan teclado [brilho 0-4] [#rrggbb]")
+        try:
+            pedido = validar_teclado(pedido)
+            with open(TECLADO_PEDIDO, "w") as f:
+                json.dump(pedido, f)
+        except (ValueError, OSError) as e:
+            sys.exit(f"não consegui pedir ao serviço: {e}")
+        print("pedido enviado ao serviço")
     elif cmd == "auto":
         EC().auto()
         print("fans no automático da BIOS")
