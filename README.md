@@ -17,7 +17,7 @@ O Avell Fan troca o Control Center por um serviço com interface própria:
 - **limite de carga da bateria** (100 %, ~90 % ou ~80 %): para quem vive na tomada, a bateria dura mais anos;
 - **troca de perfil automática** ao ligar ou tirar da tomada (ex.: silencioso na bateria);
 - **brilho e cor do teclado RGB** e **Fn Lock**, sem senha;
-- **botão de modo** (ao lado do power) alternando os perfis, como no Windows;
+- **botão de modo** (ao lado do power) alternando os perfis, com a **luz do botão** acompanhando o perfil, como no Windows;
 - **ícone na bandeja** para trocar de perfil com um clique;
 - **comando de terminal** (`avell-fan`) para scripts.
 

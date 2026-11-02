@@ -12,6 +12,7 @@ Comandos:
                                 high_capacity (~100%), balanced (~90%), stationary (~80%)
   avell-fan teclado [brilho] [#cor]  mostra ou muda o brilho (0-4) e a cor do teclado (via serviço)
   avell-fan versao              mostra a versão
+  avell-fan led-teste           passa a luz do botão de modo por economia/normal/turbo e restaura (root)
   avell-fan botao               mostra as teclas recebidas pelo "TUXEDO Keyboard" (root) para achar o botão de fan
 """
 import array
@@ -37,6 +38,10 @@ R_FANSPEED, R_FANSPEED2, R_FAN_TEMP, R_FAN_TEMP2 = _ior(0x10), _ior(0x11), _ior(
 R_MODE = _ior(0x14)  # EC 0x0751; bit 0x40 = "full fan mode"
 W_FANSPEED, W_FANSPEED2 = _iow(0x10), _iow(0x11)
 W_FANAUTO = (_W << 8) | 0x14
+W_PERF_PROF = _iow(0x18)  # bits 0xa0/0x10 do EC 0x0751: modo de energia, que acende a luz do botão de modo
+# modo de energia do EC (uw_perf_profiles_v1) -> bits em 0x0751
+MODOS_ENERGIA = {1: ("economia", 0xA0), 2: ("normal", 0x00), 3: ("turbo", 0x10)}
+MODO_DO_PERFIL = {"silencioso": 1, "equilibrado": 2, "maximo": 3, "auto": 2}
 RAW_MAX = 200  # escala do EC: 0..200 = 0..100%
 
 # ---------------------------------------------------------------- configuração
@@ -75,6 +80,9 @@ DEFAULT_CONFIG = {
     # Tecla de modo ao lado do power (evento WMI 0xB0): o driver a converte em Meta+Alt+F6 no
     # dispositivo "TUXEDO Keyboard". Só esse dispositivo é lido, então um F6 comum não conta.
     "botao_keycode": 64,          # KEY_F6; null desliga. Para conferir: sudo avell-fan botao
+    # luz do botão de modo acompanha o perfil (silencioso=economia, equilibrado=normal, maximo=turbo).
+    # Esses bits também são o "modo de energia" do EC: em alguns modelos mudam o limite de potência.
+    "led_botao": False,
     "carga": None,                # limite da bateria: high_capacity (100%) | balanced (90%) | stationary (80%); None = não mexe
     "perfil_tomada": None,        # perfil aplicado ao ligar na tomada; None = não troca
     "perfil_bateria": None,       # perfil aplicado ao tirar da tomada; None = não troca
@@ -111,6 +119,8 @@ def validate_user_config(user):
     bk = user.get("botao_keycode", 64)
     if bk is not None and (not isinstance(bk, int) or not 1 <= bk <= 767):
         raise ValueError("botao_keycode deve ser um código de tecla (1-767) ou null")
+    if not isinstance(user.get("led_botao", False), bool):
+        raise ValueError("led_botao deve ser true ou false")
     carga = user.get("carga")
     if carga is not None and carga not in CARGAS:
         raise ValueError(f"carga deve ser {', '.join(CARGAS)} ou null")
@@ -173,6 +183,14 @@ class EC:
 
     def auto(self):
         fcntl.ioctl(self.fd, W_FANAUTO)
+
+    def modo_energia(self):
+        """1 economia, 2 normal, 3 turbo (None se os bits não baterem com nenhum)."""
+        bits = self.mode() & 0xB0
+        return next((n for n, (_, b) in MODOS_ENERGIA.items() if b == bits), None)
+
+    def set_modo_energia(self, n):
+        self._write(W_PERF_PROF, n)  # o driver preserva os outros bits (inclusive 0x40 do fan)
 
 
 def curve(points, temp):
@@ -513,6 +531,13 @@ def daemon():
                     print(f"{'tomada' if tomada else 'bateria'}: perfil {auto_perfil}", flush=True)
                 ultima_tomada = tomada
             perfil = read_perfil(cfg)
+            if cfg.get("led_botao"):
+                alvo_modo = MODO_DO_PERFIL.get(perfil, 2)
+                try:
+                    if ec.modo_energia() != alvo_modo:  # também cobre o reset do EC após suspender
+                        ec.set_modo_energia(alvo_modo)
+                except OSError:
+                    pass
             if temp >= cfg["temp_failsafe"]:
                 em_failsafe = True
             elif temp <= cfg["temp_failsafe"] - cfg["failsafe_saida_c"]:
@@ -661,6 +686,22 @@ def main():
         os.replace(tmp, CONFIG_FILE)
         aplicar_carga(load_config())  # aplica já, mesmo sem o serviço
         print(f"carga: {args[1]} (até ~{CARGAS[args[1]]}%), salvo em {CONFIG_FILE}")
+    elif cmd == "led-teste":
+        if os.geteuid() != 0:
+            sys.exit("precisa de root: sudo avell-fan led-teste")
+        ec = EC()
+        original = ec.modo_energia()
+        seg = float(args[1]) if len(args) > 1 else 6
+        print(f"0x0751 = 0x{ec.mode():02x} (modo de energia: {MODOS_ENERGIA.get(original, ('?',))[0]})")
+        try:
+            for n, (nome, _) in MODOS_ENERGIA.items():
+                ec.set_modo_energia(n)
+                time.sleep(0.3)
+                print(f"  {n} {nome:9s} -> 0x0751 = 0x{ec.mode():02x}   olhe a luz do botão ({seg:.0f}s)", flush=True)
+                time.sleep(seg)
+        finally:
+            ec.set_modo_energia(original or 2)
+            print(f"restaurado: 0x{ec.mode():02x}")
     elif cmd == "versao":
         print(VERSION)
     elif cmd == "teclado":

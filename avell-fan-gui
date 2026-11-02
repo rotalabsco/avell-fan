@@ -1081,7 +1081,42 @@ class Janela(Gtk.ApplicationWindow):
         self.sw_botao.connect("state-set", self.on_botao)
         linha.pack_start(self.sw_botao, False, False, 0)
         card.pack_start(linha, False, False, 0)
+
+        linha = Gtk.Box(spacing=12)
+        txt = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        txt.pack_start(label("Luz do botão acompanha o perfil", "seg-title"), False, False, 0)
+        d = label("Silencioso: economia · Equilibrado: normal · Máximo: turbo. É o modo de energia do notebook: "
+                  "em alguns modelos também muda o limite de potência da CPU.", "muted")
+        d.set_line_wrap(True)
+        txt.pack_start(d, False, False, 0)
+        linha.pack_start(txt, True, True, 0)
+        self.sw_led = Gtk.Switch(valign=Gtk.Align.CENTER)
+        self.sw_led.set_active(bool(core.load_config().get("led_botao")))
+        self.sw_led.connect("state-set", lambda sw, v: self._salvar_chave(sw, v, "led_botao", True, None, "Luz do botão"))
+        linha.pack_start(self.sw_led, False, False, 0)
+        card.pack_start(linha, False, False, 0)
         return card
+
+    def _salvar_chave(self, sw, ligado, chave, valor_on, valor_off, nome):
+        """Grava uma chave do /etc/avell-fan.json via pkexec; o switch só muda depois da senha.
+        valor None = remove a chave (volta ao padrão)."""
+        user = user_config()
+        valor = valor_on if ligado else valor_off
+        if valor is None:
+            user.pop(chave, None)
+        else:
+            user[chave] = valor
+
+        def fim(ok, msg):
+            if ok:
+                sw.set_state(ligado)
+                self.banner.show_msg(f"{nome}: " + ("ativado." if ligado else "desativado."), "info")
+            else:
+                sw.set_active(not ligado)
+                sw.set_state(not ligado)
+                self.banner.show_msg(msg, "warning")
+        executar_root([CORE_BIN, "aplicar-config"], json.dumps(user), fim)
+        return True
 
     def on_botao(self, sw, ligado):
         user = user_config()
