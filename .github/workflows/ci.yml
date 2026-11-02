@@ -69,7 +69,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Gerar o .deb
-        run: ./packaging/build-deb.sh
+        run: |
+          ./packaging/build-deb.sh
+          # nome fixo: releases/latest/download/avell-fan_all.deb nunca quebra (link do site)
+          cp dist/avell-fan_*_all.deb dist/avell-fan_all.deb
       - uses: actions/upload-artifact@v4
         with:
           name: avell-fan-deb
