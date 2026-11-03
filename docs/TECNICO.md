@@ -9,7 +9,7 @@ avell-fan (Python, daemon root)  ──ioctl──▶  /dev/tuxedo_io  ──WMI
                                               (tuxedo_io + uniwill_wmi + tuxedo_keyboard)
 ```
 
-- **Drivers:** `vendor/tuxedo-drivers` é uma cópia do [tuxedo-drivers](https://github.com/tuxedocomputers/tuxedo-drivers) (GPLv2, commit `a929f9c`). O Avell passa no `tuxedo_compatibility_check` porque a CPU é Comet Lake, que está na lista de exceções do driver.
+- **Drivers:** `vendor/tuxedo-drivers` é uma cópia do [tuxedo-drivers](https://github.com/tuxedocomputers/tuxedo-drivers) (GPL-2.0-or-later, commit `a929f9c`). O Avell passa no `tuxedo_compatibility_check` porque a CPU é Comet Lake, que está na lista de exceções do driver.
 - **Registradores do EC usados pelo driver:**
   - velocidade dos fans: `0x1804` e `0x1809`, escala 0–200;
   - temperaturas: `0x043e` (CPU) e `0x044f` (GPU);
